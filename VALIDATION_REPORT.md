@@ -1,7 +1,7 @@
 # Entity Manager Accounts Module - Validation Report
 
 ## Executive Summary
-This report validates the completeness of the accounts module implementation in the entity-manager frontend against the Django backend (smart_school_management_backend).
+This report validates the completeness of the accounts module implementation in the entity-manager frontend against the Django backend (django_starter_template_backend).
 
 ---
 

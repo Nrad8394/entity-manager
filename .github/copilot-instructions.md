@@ -255,7 +255,7 @@ app/dashboard/
 
 ## Django Backend Integration
 
-### API Structure (in `smart_school_management_backend/`)
+### API Structure (in `django_starter_template_backend/`)
 
 ```
 apps/{module}/
@@ -321,7 +321,7 @@ npm run typecheck    # Run TypeScript type checking
 npm run lint         # Run ESLint
 npm run test         # Run Vitest tests
 
-# Backend (smart_school_management_backend/smart_school_management/)
+# Backend (django_starter_template_backend/django_starter_template/)
 py manage.py runserver    # Start Django dev server
 py manage.py migrate      # Apply migrations
 py manage.py makemigrations {app_name}  # Create migrations
