@@ -6,6 +6,7 @@
  */
 
 import { BaseEntity } from '../../primitives/types';
+import { Action, ActionContext } from '../actions/types';
 
 /**
  * View mode enumeration
@@ -102,8 +103,8 @@ export interface ViewTab<T extends BaseEntity = BaseEntity> {
   /** Tab icon */
   icon?: string | React.ReactNode;
   
-  /** Tab content */
-  content: React.ComponentType<{ entity: T }> | React.ReactNode;
+  /** Tab content - optional if tab.id matches a group.id (will auto-render group fields) */
+  content?: React.ComponentType<{ entity: T }> | React.ReactNode;
   
   /** Badge count */
   badge?: number | ((entity: T) => number);
@@ -165,8 +166,14 @@ export interface EntityViewProps<T extends BaseEntity = BaseEntity> {
   /** Callback when field is copied */
   onCopy?: (field: keyof T | string, value: unknown) => void;
   
-  /** Header actions */
-  actions?: React.ReactNode;
+  /** Header actions - either React nodes or Action definitions for single-item rendering */
+  actions?: React.ReactNode | Action<T>[];
+  
+  /** Action context for executing single-item actions */
+  actionContext?: ActionContext<T>;
+  
+  /** Callback when an action completes */
+  onActionComplete?: (actionId: string) => void;
 }
 
 /**

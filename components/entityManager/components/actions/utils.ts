@@ -79,6 +79,18 @@ export function canExecuteAction<T extends BaseEntity>(
   if (!action.allowMultiple && context?.selectedEntities && context.selectedEntities.length > 1) {
     return false;
   }
+
+  // Check action-level required permissions (if defined)
+  const ctxPerms: string[] = context?.permissions || [];
+  if (action.permission) {
+    if (!ctxPerms.includes(action.permission)) return false;
+  }
+
+  if (action.permissions && action.permissions.length > 0) {
+    // Require ALL permissions to be present
+    const allowed = action.permissions.every(p => ctxPerms.includes(p));
+    if (!allowed) return false;
+  }
   
   return true;
 }
@@ -147,6 +159,18 @@ export function getActionTooltip<T extends BaseEntity>(
     }
     if (!action.allowMultiple && context?.selectedEntities && context.selectedEntities.length > 1) {
       return 'This action can only be performed on one item';
+    }
+  }
+  
+  // Fall back to showing the label as tooltip
+  const label = action.label;
+  if (typeof label === 'string') return label;
+  if (typeof label === 'function') {
+    try {
+      const result = label(entity);
+      return typeof result === 'string' ? result : String(result || '');
+    } catch {
+      return undefined;
     }
   }
   
@@ -300,9 +324,9 @@ export function validateFormValues(
 /**
  * Get bulk confirmation message
  */
-export function getBulkConfirmMessage(
-  message: string | ((items?: any[]) => string) | undefined,
-  items: any[]
+export function getBulkConfirmMessage<T = unknown>(
+  message: string | ((items?: T[]) => string) | undefined,
+  items: T[]
 ): string {
   const count = items?.length ?? 0;
   if (!message) {

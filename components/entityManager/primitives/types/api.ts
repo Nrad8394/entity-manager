@@ -88,8 +88,6 @@ export interface ListQueryParams {
   filters?: FilterConfig[];
   /** Search query */
   search?: string;
-  /** Search fields */
-  searchFields?: string[];
   /** Fields to include in response */
   fields?: string[];
   /** Fields to expand/populate */

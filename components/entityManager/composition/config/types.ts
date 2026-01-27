@@ -74,6 +74,9 @@ export interface EntityConfig<T extends BaseEntity = BaseEntity> {
   /** Entity name */
   name: string;
   
+  /** Primary key field name (defaults to 'id') */
+  primaryKeyField?: string;
+  
   /** Entity display name (plural) */
   pluralName?: string;
   
@@ -112,11 +115,13 @@ export interface EntityConfig<T extends BaseEntity = BaseEntity> {
   
   /** Permissions */
   permissions?: {
-    create?: boolean;
-    read?: boolean;
-    update?: boolean;
-    delete?: boolean;
-    export?: boolean;
+    // Support either static boolean flags or permission codenames (string) or arrays of codenames.
+    // Example: { create: true } or { create: 'can_manage_users' } or { create: ['role:admin', 'can_manage_users'] }
+    create?: boolean | string | string[];
+    read?: boolean | string | string[];
+    update?: boolean | string | string[];
+    delete?: boolean | string | string[];
+    export?: boolean | string | string[];
   };
   
   /** Metadata */
@@ -246,11 +251,11 @@ export interface EntityConfigBuilderState<T extends BaseEntity = BaseEntity> {
   
   /** Permissions */
   permissions?: {
-    create?: boolean;
-    read?: boolean;
-    update?: boolean;
-    delete?: boolean;
-    export?: boolean;
+    create?: boolean | string | string[];
+    read?: boolean | string | string[];
+    update?: boolean | string | string[];
+    delete?: boolean | string | string[];
+    export?: boolean | string | string[];
   };
   
   /** Metadata */

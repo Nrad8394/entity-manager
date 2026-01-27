@@ -15,8 +15,12 @@ import { EntityForm } from '../components/form';
 import { EntityView } from '../components/view';
 import { EntityStateProvider, useEntityState } from '../composition/exports';
 import { EntityApiProvider, useEntityMutations } from '../composition/exports';
+import { createReactQueryHooks } from '../composition/api/createHttpClient';
 import { FormMode } from '../components/form/types';
 import { toast } from 'sonner';
+import { Button } from '@/components/ui/button';
+import EntityImporter from '@/components/entityManager/components/importer/EntityImporter';
+import { usePermissions } from '@/hooks/use-permissions';
 
 /**
  * Build query parameters for API calls
@@ -79,6 +83,7 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
 
     const normalizedEntity: any = {
       name: entity.name || entity.entityName || entity.label || 'Entity',
+      primaryKeyField: entity.primaryKeyField || 'id',
       label: entity.label || entity.entityName || entity.name || 'Entity',
       labelPlural: entity.labelPlural || entity.entityNamePlural || entity.pluralName || `${entity.name || entity.entityName || 'Entities'}`,
       description: entity.description,
@@ -134,6 +139,37 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
   // Use normalized config in place of raw config
   const config = normalizedConfig as typeof rawConfig;
 
+  // Permissions hook (gives current user's permissions and helpers)
+  const permissionsHook = usePermissions();
+
+  // Resolve entity-level permission specs (which can be boolean, string, or string[])
+  const resolvedPermissions = useMemo(() => {
+    const spec = config.config.permissions || {};
+    const resolve = (v: any, actionKey: 'create' | 'read' | 'update' | 'delete' | 'export') => {
+      // If unspecified, default to allow (backwards compatibility)
+      if (v === undefined) return true;
+
+      // If boolean: interpret `true` as "require the user's entity-level permission"
+      // and `false` as explicitly denied.
+      if (typeof v === 'boolean') {
+        return v;
+      }
+
+      // If a string or array, treat as permission codename(s)
+      if (typeof v === 'string') return permissionsHook.hasPermission(v);
+      if (Array.isArray(v)) return v.every((p: string) => permissionsHook.hasPermission(p));
+      return Boolean(v);
+    };
+
+    return {
+      create: resolve(spec.create, 'create'),
+      read: resolve(spec.read, 'read'),
+      update: resolve(spec.update, 'update'),
+      delete: resolve(spec.delete, 'delete'),
+      export: resolve(spec.export, 'export'),
+    };
+  }, [config.config.permissions, permissionsHook]);
+
   // Use initialView/initialId from config or props (props take precedence)
   const initialViewToUse = config.initialView ?? 'list';
   const initialIdToUse = config.initialId;
@@ -147,6 +183,12 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
   const state = useEntityState<T>();
   const mutations = useEntityMutations<T>();
 
+  // Create react-query hooks bound to the provided API client when available.
+  // We keep calling the factory here (it's lightweight) so hooks are available
+  // to useQuery/useMutation consumers below. If no client is provided, hooks
+  // will be null and we fallback to imperative client calls.
+  const rq = config.apiClient ? createReactQueryHooks<T, any>(config.apiClient as any) : null;
+
   // Memoize pagination config to prevent unnecessary re-renders
   const memoizedPaginationConfig = useMemo(() => ({
     ...config.config.list.paginationConfig,
@@ -154,6 +196,26 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
     pageSize: state.state.pageSize,
     totalCount: state.state.total
   }), [config.config.list.paginationConfig, state.state.page, state.state.pageSize, state.state.total]);
+
+  // Build a stable queryParams object used for react-query hooks when available
+  const currentQueryParams = useMemo(() => {
+    const params = buildQueryParams(state.state.page, state.state.pageSize, state.state.sort ?? null, state.state.search, state.state.filters);
+    if (state.state.search) {
+      console.log('🔍 currentQueryParams updated with search:', { search: state.state.search, params });
+    }
+    return params;
+  }, [state.state.page, state.state.pageSize, state.state.sort, state.state.search, state.state.filters]);
+
+  // Helper to normalize entity id from common shapes (id, pk, uuid, slug)
+  const normalizeEntity = useCallback((e: any) => {
+    if (!e) return e;
+    const id = e.id ?? e.pk ?? e.uuid ?? e.slug ?? e.name ?? e.pk_id;
+    return { ...e, id };
+  }, []);
+
+  // Bind react-query list/get hooks at top level (hooks must be called unconditionally)
+  const listQuery = rq ? rq.useList(currentQueryParams, { enabled: false }) : null;
+  const getQuery = rq ? rq.useGet(selectedId ?? undefined, { enabled: false }) : null;
 
   // Watch for initialView and initialId changes from parent
   useEffect(() => {
@@ -185,30 +247,42 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
 
     state.setLoading(true);
     const queryParams = buildQueryParams(page, pageSize, sort, search, filters);
+    console.log('🌐 fetchEntities called with page:', page, 'buildQueryParams result:', queryParams);
 
     try {
+      // Always use the imperative API client to ensure pagination params are passed correctly
+      // React-query's refetch() doesn't support passing new parameters, so we use apiClient directly
       const response = await config.apiClient.list(queryParams as Parameters<typeof config.apiClient.list>[0]) as any;
+      console.log('✨ API Response received:', response);
       // Normalize legacy DRF responses if necessary
-      const normalized = ((): { data: any[]; meta?: { total?: number } } => {
+      const normalized = ((): { data: any[]; meta?: { total?: number; page?: number; pageSize?: number } } => {
         if (response && typeof response === 'object') {
-          if ('data' in response) return { data: response.data, meta: response.meta };
-          if ('results' in response) return { data: response.results, meta: { total: response.count ?? response.results.length } };
+          if ('data' in response) {
+            const dataValue = Array.isArray(response.data) ? response.data : [];
+            return { data: dataValue, meta: response.meta };
+          }
+          if ('results' in response) {
+            const resultsValue = Array.isArray(response.results) ? response.results : [];
+            return { data: resultsValue, meta: { total: response.count ?? resultsValue.length, page: response.current_page || response.page, pageSize: response.page_size || response.pageSize } };
+          }
         }
         return { data: Array.isArray(response) ? response : [] };
       })();
 
-      const data = normalized.data || [];
-      state.setEntities(data);
+      console.log('📊 Normalized data:', { dataLength: normalized.data.length, meta: normalized.meta });
+      const data = Array.isArray(normalized.data) ? normalized.data.map(normalizeEntity) : [];
+      state.setEntities(data as T[]);
       if (normalized.meta?.total !== undefined) {
         state.setTotal(normalized.meta.total);
       }
     } catch (error) {
       const errorMessage = getErrorMessage(error, 'Failed to load data');
+      console.error('❌ fetchEntities error:', errorMessage, error);
       state.setError(errorMessage);
     } finally {
       state.setLoading(false);
     }
-  }, [config, state]);
+  }, [config, state, normalizeEntity]);
 
   /**
    * Fetch a single entity by ID
@@ -219,8 +293,13 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
     state.setLoading(true);
 
     try {
+      // Always use the imperative API client with the provided id. The
+      // react-query `get` hook (getQuery) is bound to `selectedId` when it
+      // was created and may hold a stale/undefined id. Using the client
+      // directly ensures we request the correct resource URL for the
+      // id passed into this function.
       const response = await config.apiClient.get(id) as any;
-      const entity = ('data' in response) ? response.data : response;
+      const entity = normalizeEntity(('data' in response) ? response.data : response);
 
       if (merge) {
         state.updateEntity(entity);
@@ -234,7 +313,7 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
     } finally {
       state.setLoading(false);
     }
-  }, [config.apiClient, state]);
+  }, [config.apiClient, state, normalizeEntity]);
 
   // Auto-fetch data on mount if API client is available
   useEffect(() => {
@@ -271,57 +350,81 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config.apiClient, initialViewToUse, initialIdToUse]);
 
-  // Use ref to track previous filters and only update when content actually changes
-  const prevFiltersRef = useRef<string>('');
+  // Use refs to track previous filters/search/sort to avoid unnecessary refetches
+  const prevFiltersKeyRef = useRef<string>('');
   const prevFiltersObjectRef = useRef<FilterConfig[]>([]);
   const stableFilters = useMemo(() => {
     const filtersJson = JSON.stringify(state.state.filters);
-    if (filtersJson !== prevFiltersRef.current) {
-      prevFiltersRef.current = filtersJson;
-      prevFiltersObjectRef.current = state.state.filters;
-      return state.state.filters;
+    // If key matches previous key, return the same object reference to avoid re-renders
+    if (filtersJson === prevFiltersKeyRef.current) {
+      return prevFiltersObjectRef.current;
     }
-    // Return the same reference if content hasn't changed
-    return prevFiltersObjectRef.current;
+    // Otherwise return the new filters (do not mutate prevFiltersKeyRef here - update after fetch)
+    return state.state.filters;
   }, [state.state.filters]);
 
   // Refetch data when sorting, search, or filters change (but not pagination, handled directly)
   // Track previous values to prevent unnecessary refetches
   const prevSortRef = useRef<string | null>(null);
   const prevSearchRef = useRef<string>('');
+  const searchDebounceRef = useRef<number | null>(null);
 
   useEffect(() => {
-    // Don't fetch if:
-    // - No API client
-    // - Not in list view
-    // - Initial list fetch is still in progress (loading and not yet completed)
     if (!config.apiClient || view !== 'list') return;
     if (!initialListFetchCompleted.current) return;
 
     const { page, pageSize, sort, search } = state.state;
 
-    // Create stable sort key for comparison
     const sortKey = sort ? `${sort.field}-${sort.direction}` : null;
+    const filtersKey = JSON.stringify(state.state.filters);
 
-    // Only refetch if sort, search, or filters actually changed
     const sortChanged = sortKey !== prevSortRef.current;
     const searchChanged = search !== prevSearchRef.current;
-    const filtersKey = JSON.stringify(stableFilters);
+    const filtersChanged = filtersKey !== prevFiltersKeyRef.current;
 
-    if (!sortChanged && !searchChanged) {
-      // Check if filters changed by comparing with ref
-      if (filtersKey === prevFiltersRef.current) {
-        return; // Nothing changed, skip fetch
-      }
+    console.log('🔍 Search effect triggered:', { search, searchChanged, prevSearch: prevSearchRef.current, sortChanged, filtersChanged });
+
+    // If nothing changed, skip
+    if (!sortChanged && !searchChanged && !filtersChanged) {
+      console.log('⏭️ No changes detected, skipping fetch');
+      return;
     }
 
-    // Update refs
+    // If search changed but filters/sort did not, debounce the search to avoid rapid requests
+    if (searchChanged && !sortChanged && !filtersChanged) {
+      console.log('⏳ SEARCH CHANGED - DEBOUNCING for 350ms. New search value:', search);
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+      // eslint-disable-next-line @typescript-eslint/no-implied-eval
+      searchDebounceRef.current = window.setTimeout(() => {
+        console.log('⏰ DEBOUNCE FIRED - NOW FETCHING with search:', search);
+        prevSearchRef.current = search;
+        prevFiltersKeyRef.current = filtersKey;
+        prevFiltersObjectRef.current = state.state.filters;
+        prevSortRef.current = sortKey;
+        fetchEntities(page, pageSize, sort ?? null, search, state.state.filters);
+        searchDebounceRef.current = null;
+      }, 350);
+      return;
+    }
+
+    // Immediate fetch for sort or filters changes
+    console.log('⚡ SORT OR FILTER CHANGED - IMMEDIATE FETCH');
     prevSortRef.current = sortKey;
     prevSearchRef.current = search;
+    prevFiltersKeyRef.current = filtersKey;
+    prevFiltersObjectRef.current = state.state.filters;
 
     fetchEntities(page, pageSize, sort ?? null, search, stableFilters);
     // Using specific state properties to prevent infinite loop - state.state changes on every update
     // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+        searchDebounceRef.current = null;
+      }
+    };
   }, [config.apiClient, view, state.state.sort, state.state.search, state.state.page, state.state.pageSize, stableFilters, fetchEntities]);
 
   // listen for view change and call onviewchange callback
@@ -345,32 +448,137 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
   // Memoize actions with context to prevent re-renders
   const actionsWithContext = useMemo(() => {
     if (!config.config.actions) return undefined;
+    // Clone actions to avoid mutating original config
+    const raw = config.config.actions as any;
+    const clone: any = { ...(raw as any) };
+
+    // Helper to infer required entity-level permission for actions that don't declare action-level permissions
+    const inferEntityRequirement = (action: any): { require?: 'create'|'read'|'update'|'delete'|'export' } => {
+      // If action explicitly declares a permission, don't infer
+      if (action.permission || (Array.isArray(action.permissions) && action.permissions.length > 0)) return {};
+      const id = String(action.id || '').toLowerCase();
+      const label = String(action.label || '').toLowerCase();
+      if (id.includes('delete') || label.includes('delete') || action.variant === 'destructive') return { require: 'delete' };
+      if (id.includes('export') || label.includes('export')) return { require: 'export' };
+      if (id.includes('create') || label.includes('create') || id.includes('add')) return { require: 'create' };
+      return {};
+    };
+
+    // Filter helper applying resolved entity permissions
+    const filterArray = (arr: any[] | undefined) => {
+      if (!Array.isArray(arr)) return arr;
+      return arr.filter(a => {
+        const inferred = inferEntityRequirement(a);
+        if (inferred.require) {
+          return Boolean(resolvedPermissions[inferred.require]);
+        }
+        return true;
+      });
+    };
+
+    // Support both normalized `actions.actions` and legacy { row, bulk } shapes
+    const normalizedActions = Array.isArray(raw.actions) ? raw.actions : (Array.isArray(raw.row) ? raw.row : []);
+    const normalizedBulk = Array.isArray(raw.bulk) ? raw.bulk : [];
+
+    const filteredActions = filterArray(normalizedActions);
+    const filteredBulk = filterArray(normalizedBulk);
 
     return {
-      ...config.config.actions,
+      ...raw,
+      actions: filteredActions,
+      bulk: filteredBulk,
       context: {
-        ...config.config.actions.context,
+        ...raw.context,
         refresh: refreshData,
         customData: {
           allData: state.state.entities, // Pass all data for export
         },
+        // Permissions context: provide current user's permission codenames to action handlers
+        permissions: permissionsHook.userPermissions,
+        // Also include resolved entity-level permissions for action handlers
+        entityPermissions: resolvedPermissions,
       },
     };
-  }, [config.config.actions, refreshData, state.state.entities]);
+  }, [config.config.actions, refreshData, state.state.entities, permissionsHook.userPermissions, resolvedPermissions]);
+
+  // Importer modal state
+  const [importerOpen, setImporterOpen] = React.useState(false);
+
+  // Helper to download blob
+  const downloadBlob = (blob: Blob, filename: string) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  };
+
+  // Build default toolbar actions (Import / Template / Export) when apiClient exists
+  const toolbarActionsNode = useMemo(() => {
+    if (!config.apiClient) return null;
+
+    // Template download is handled inside the Importer modal
+
+    const handleExport = async (format: 'csv' | 'xlsx' = 'csv') => {
+      try {
+        // Normalize exporter fields: support strings or column objects
+        const rawFields = config.config.exporter?.fields ?? undefined;
+        const fields = rawFields ? rawFields.map((f: any) => {
+          if (typeof f === 'string') return f;
+          if (f == null) return String(f);
+          // Prefer `key`, then `name`, then `field`
+          if (typeof f === 'object') return String(f.key ?? f.name ?? f.field ?? f.value ?? JSON.stringify(f));
+          return String(f);
+        }) : undefined;
+
+        const blob = await config.apiClient!.bulkExport!({ fields, file_format: format });
+        const baseName = config.config.label || config.config.name || 'export';
+        const fname = `${baseName}_Export.${format === 'csv' ? 'csv' : 'xlsx'}`;
+        downloadBlob(blob, fname);
+        toast.success('Export started');
+      } catch (err) {
+        toast.error('Export failed');
+      }
+    };
+
+    return (
+      <div className="flex items-center gap-2">
+        {resolvedPermissions.create && (
+          <Button variant="outline" size="sm" onClick={() => setImporterOpen(true)}>Import</Button>
+        )}
+        {resolvedPermissions.export && (
+          <Button variant="outline" size="sm" onClick={() => handleExport('xlsx')}>Export (xlsx)</Button>
+        )}
+      </div>
+    );
+  }, [config.apiClient, config.config.name, config.config.exporter, resolvedPermissions, config.config.label]);
 
   // Handle edit
   const handleEdit = useCallback((entity: T) => {
+    // Respect entity-level update permission
+    if (!resolvedPermissions.update) {
+      toast.error('You do not have permission to edit this item');
+      return;
+    }
     setView('edit');
-    setSelectedId(entity.id);
-    fetchSingleEntity(entity.id, true);
-  }, [fetchSingleEntity]);
+    setSelectedId(entity[config.config.primaryKeyField || 'id']);
+    fetchSingleEntity(entity[config.config.primaryKeyField || 'id'], true);
+  }, [fetchSingleEntity, resolvedPermissions]);
 
   // Handle view
   const handleView = useCallback((entity: T) => {
+    // Respect entity-level read permission
+    if (!resolvedPermissions.read) {
+      toast.error('You do not have permission to view this item');
+      return;
+    }
     setView('view');
-    setSelectedId(entity.id);
-    fetchSingleEntity(entity.id, true);
-  }, [fetchSingleEntity]);
+    setSelectedId(entity[config.config.primaryKeyField || 'id']);
+    fetchSingleEntity(entity[config.config.primaryKeyField || 'id'], true);
+  }, [fetchSingleEntity, resolvedPermissions]);
 
   // Handle back to list
   const handleBack = useCallback(() => {
@@ -400,11 +608,15 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
   // Handle pagination change
   const handlePaginationChange = useCallback(async (paginationConfig: { page?: number; pageSize?: number }) => {
     const newPage = paginationConfig.page || 1;
-    const newPageSize = paginationConfig.pageSize || 10;
+    const newPageSize = paginationConfig.pageSize || state.state.pageSize;
 
-    // Update state immediately
+    // Update page first
     state.setPage(newPage);
-    state.setPageSize(newPageSize);
+    
+    // Only update page size if it changed
+    if (newPageSize !== state.state.pageSize) {
+      state.setPageSize(newPageSize);
+    }
 
     // Trigger API call directly
     if (config.apiClient && view === 'list') {
@@ -422,8 +634,8 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
             <button
               onClick={handleBack}
               className={`inline-flex items-center font-medium transition-colors ${view === 'list'
-                  ? 'text-primary cursor-default'
-                  : 'text-muted-foreground hover:text-primary'
+                ? 'text-primary cursor-default'
+                : 'text-muted-foreground hover:text-primary'
                 }`}
               disabled={view === 'list'}
               aria-current={view === 'list' ? 'page' : undefined}
@@ -469,43 +681,83 @@ function EntityManagerContent<T extends BaseEntity = BaseEntity>(
     return (
       <div className="space-y-4">
         {renderBreadcrumbs()}
-        <EntityList
-          data={state.state.entities}
-          columns={config.config.list.columns}
-          view="table"
-          toolbar={config.config.list.toolbar}
-          selectable={config.config.list.selectable}
-          multiSelect={config.config.list.multiSelect}
-          selectedIds={state.state.selectedIds}
-          onSelectionChange={state.setSelected}
-          onRowClick={config.config.list.onRowClick || handleView}
-          onRowDoubleClick={config.config.list.onRowDoubleClick || handleEdit}
-          pagination={true}
-          paginationConfig={memoizedPaginationConfig}
-          onPaginationChange={handlePaginationChange}
-          sortable={config.config.list.sortable}
-          sortConfig={state.state.sort}
-          onSortChange={state.setSort}
-          filterable={config.config.list.filterable}
-          filterConfigs={state.state.filters}
-          onFilterChange={state.setFilters}
-          searchable={config.config.list.searchable}
-          searchValue={state.state.search}
-          onSearchChange={state.setSearch}
-          searchPlaceholder={config.config.list.searchPlaceholder}
-          emptyMessage={config.config.list.emptyMessage}
-          loading={state.state.loading}
-          error={state.state.error}
-          actions={actionsWithContext}
-          className={config.config.list.className}
-          hover={config.config.list.hover}
-          striped={config.config.list.striped}
-          bordered={config.config.list.bordered}
-          titleField={config.config.list.titleField}
-          subtitleField={config.config.list.subtitleField}
-          imageField={config.config.list.imageField}
-          dateField={config.config.list.dateField}
-        />
+        <>
+          <EntityList
+            data={state.state.entities}
+            columns={config.config.list.columns}
+            view="table"
+            toolbar={{
+              ...(config.config.list.toolbar || {}), actions: (
+                <>
+                  {config.config.list.toolbar?.actions}
+                  {toolbarActionsNode}
+                </>
+              )
+            }}
+            selectable={config.config.list.selectable}
+            multiSelect={config.config.list.multiSelect}
+            selectedIds={state.state.selectedIds}
+            onSelectionChange={state.setSelected}
+            onRowClick={config.config.list.onRowClick || handleView}
+            onRowDoubleClick={config.config.list.onRowDoubleClick || handleEdit}
+            pagination={true}
+            paginationConfig={memoizedPaginationConfig}
+            onPaginationChange={handlePaginationChange}
+            sortable={config.config.list.sortable}
+            sortConfig={state.state.sort}
+            onSortChange={state.setSort}
+            filterable={config.config.list.filterable}
+            filterConfigs={state.state.filters}
+            onFilterChange={state.setFilters}
+            searchable={config.config.list.searchable}
+            searchValue={state.state.search}
+            onSearchChange={state.setSearch}
+            searchPlaceholder={config.config.list.searchPlaceholder}
+            emptyMessage={config.config.list.emptyMessage}
+            onCreate={() => {
+              // Switch to create form when user clicks create from empty state
+              setView('create');
+              setSelectedId(null);
+            }}
+            loading={state.state.loading}
+            error={state.state.error}
+            actions={actionsWithContext}
+            className={config.config.list.className}
+            hover={config.config.list.hover}
+            striped={config.config.list.striped}
+            bordered={config.config.list.bordered}
+            titleField={config.config.list.titleField}
+            subtitleField={config.config.list.subtitleField}
+            imageField={config.config.list.imageField}
+            dateField={config.config.list.dateField}
+          />
+          {/* Importer modal */}
+          {importerOpen && (
+            <EntityImporter
+              apiClient={config.apiClient}
+              open={importerOpen}
+              onClose={() => setImporterOpen(false)}
+              entityName={config.config.label || config.config.name}
+              onImported={async (summary) => {
+                // Do NOT auto-close importer here — let the importer show the result step
+                if (summary) {
+                  // Show import result toast
+                  toast.success(`Imported ${summary.imported} items`);
+                  if (summary.errors && summary.errors.length > 0) {
+                    toast.error(`${summary.errors.length} errors occurred during import`);
+                    // Keep importer open so user can review errors in the result step
+                    console.warn('Import errors:', summary.errors);
+                  }
+                  if (summary.imported > 0 && refreshData) {
+                    await refreshData();
+                  }
+                } else {
+                  toast.error('Import completed with no summary');
+                }
+              }}
+            />
+          )}
+        </>
       </div>
     );
   }
@@ -596,23 +848,42 @@ export function EntityManager<T extends BaseEntity = BaseEntity>(
 
   // Custom layout via children
   if (children) {
-    return <div className={`entity-manager ${className}`}>{children}</div>;
+    return <div className={`timex ${className}`}>{children}</div>;
   }
 
+  // Extract "view" filter if present to set initial view mode
+  const viewFilterValue = config.initialFilters?.find(f => f.field === 'view')?.value as EntityManagerView | undefined;
+  const filteredInitialFilters = config.initialFilters?.filter(f => f.field !== 'view');
+  
+  // Use view filter to override initialView if not already set
+  const effectiveInitialView = config.initialView || viewFilterValue || 'list';
+
+  // Create modified props with updated initialView
+  const modifiedProps: EntityManagerProps<T> = {
+    ...props,
+    config: {
+      ...config,
+      initialView: effectiveInitialView,
+    },
+  };
+
   // Default layout with providers
+
   return (
-    <div className={`entity-manager ${className}`}>
+    <div className={`nnp-timex ${className}`}>
       <EntityStateProvider
         initialEntities={config.initialData}
         initialPageSize={config.config.list.paginationConfig?.pageSize || 10}
         initialSort={config.config.list.sortConfig}
+        initialFilters={filteredInitialFilters}
+        primaryKeyField={config.config.primaryKeyField || 'id'}
       >
         {config.apiClient ? (
           <EntityApiProvider client={config.apiClient}>
-            <EntityManagerContent {...props} />
+            <EntityManagerContent {...modifiedProps} />
           </EntityApiProvider>
         ) : (
-          <EntityManagerContent {...props} />
+          <EntityManagerContent {...modifiedProps} />
         )}
       </EntityStateProvider>
     </div>

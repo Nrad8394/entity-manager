@@ -176,6 +176,9 @@ export interface EntityListProps<T extends BaseEntity = BaseEntity> {
   
   /** Empty state message */
   emptyMessage?: string;
+
+  /** Create action handler for empty states */
+  onCreate?: () => void;
   
   /** Loading state */
   loading?: boolean;

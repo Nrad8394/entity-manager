@@ -31,6 +31,7 @@ exports.EntityConfigBuilder = void 0;
 var FieldBuilder_1 = require("./FieldBuilder");
 var ColumnBuilder_1 = require("./ColumnBuilder");
 var ActionBuilder_1 = require("./ActionBuilder");
+var date_fns_1 = require("date-fns");
 /**
  * Entity config builder class
  */
@@ -284,6 +285,8 @@ var EntityConfigBuilder = /** @class */ (function () {
                 key: String(col.key),
                 label: typeof col.label === 'string' ? col.label : String((_a = col.label) !== null && _a !== void 0 ? _a : ''),
                 formatter: col.formatter
+                    ? (function (value, entity) { return col.formatter(value, entity); })
+                    : undefined
             });
         });
         return this;
@@ -329,6 +332,68 @@ var EntityConfigBuilder = /** @class */ (function () {
                 fields: exportFields || [],
                 options: {}
             } });
+        // Ensure datetime columns have a sensible default formatter so callers
+        // don't need to provide manual renderers in every config.
+        if (entityConfig.list && Array.isArray(entityConfig.list.columns)) {
+            entityConfig.list.columns = entityConfig.list.columns.map(function (col) {
+                var c = __assign({}, col);
+                if (c.type === 'datetime' && !c.formatter) {
+                    c.formatter = function (value) {
+                        if (value === null || value === undefined || value === '')
+                            return '';
+                        if (value instanceof Date)
+                            return date_fns_1.format(value, 'Pp');
+                        try {
+                            if (typeof value === 'string') {
+                                var parsed_1 = date_fns_1.parseISO(value);
+                                if (!isNaN(parsed_1.getTime()))
+                                    return date_fns_1.format(parsed_1, 'Pp');
+                            }
+                            if (typeof value === 'number') {
+                                var parsed_2 = new Date(value);
+                                if (!isNaN(parsed_2.getTime()))
+                                    return date_fns_1.format(parsed_2, 'Pp');
+                            }
+                            var parsed = date_fns_1.parseISO(String(value));
+                            if (!isNaN(parsed.getTime()))
+                                return date_fns_1.format(parsed, 'Pp');
+                            return String(value);
+                        }
+                        catch (_a) {
+                            return String(value);
+                        }
+                    };
+                }
+                if (c.type === 'date' && !c.formatter) {
+                    c.formatter = function (value) {
+                        if (value === null || value === undefined || value === '')
+                            return '';
+                        if (value instanceof Date)
+                            return date_fns_1.format(value, 'P');
+                        try {
+                            if (typeof value === 'string') {
+                                var parsed_3 = date_fns_1.parseISO(value);
+                                if (!isNaN(parsed_3.getTime()))
+                                    return date_fns_1.format(parsed_3, 'P');
+                            }
+                            if (typeof value === 'number') {
+                                var parsed_4 = new Date(value);
+                                if (!isNaN(parsed_4.getTime()))
+                                    return date_fns_1.format(parsed_4, 'P');
+                            }
+                            var parsed = date_fns_1.parseISO(String(value));
+                            if (!isNaN(parsed.getTime()))
+                                return date_fns_1.format(parsed, 'P');
+                            return String(value);
+                        }
+                        catch (_a) {
+                            return String(value);
+                        }
+                    };
+                }
+                return c;
+            });
+        }
         return entityConfig;
     };
     /**

@@ -243,11 +243,26 @@ function DetailView(_a) {
             react_1["default"].createElement("div", { className: "p-3 sm:p-4 bg-card" }, tabs.map(function (tab) {
                 if (tab.id !== (state === null || state === void 0 ? void 0 : state.activeTab))
                     return null;
-                var TabContent = tab.content;
-                return (react_1["default"].createElement("div", { key: tab.id, role: "tabpanel", id: "tabpanel-" + tab.id, "aria-labelledby": "tab-" + tab.id }, typeof TabContent === 'function' ? (function () {
-                    var Component = TabContent;
-                    return react_1["default"].createElement(Component, { entity: entity });
-                })() : TabContent));
+                // Auto-generate content from groups if tab.content is not provided but tab.id matches a group.id
+                var tabContent = null;
+                if (tab.content) {
+                    var TabContent_1 = tab.content;
+                    tabContent = typeof TabContent_1 === 'function' ? (function () {
+                        var Component = TabContent_1;
+                        return react_1["default"].createElement(Component, { entity: entity });
+                    })() : TabContent_1;
+                }
+                else {
+                    // Try to find a matching group and render its fields
+                    var matchingGroup = groups === null || groups === void 0 ? void 0 : groups.find(function (g) { return g.id === tab.id; });
+                    if (matchingGroup) {
+                        var groupFields_1 = groupedFields.get(matchingGroup.id);
+                        if (groupFields_1 && groupFields_1.length > 0) {
+                            tabContent = (react_1["default"].createElement("div", { className: "space-y-2 sm:space-y-3" }, groupFields_1.map(function (field) { return (react_1["default"].createElement(FieldRow, { key: String(field.key), field: field, value: utils_1.getFieldValue(entity, field.key), entity: entity, onCopy: onCopy, copiedField: copiedField })); })));
+                        }
+                    }
+                }
+                return (react_1["default"].createElement("div", { key: tab.id, role: "tabpanel", id: "tabpanel-" + tab.id, "aria-labelledby": "tab-" + tab.id }, tabContent));
             }))))));
 }
 /**

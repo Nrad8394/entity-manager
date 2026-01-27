@@ -5,6 +5,17 @@
  * Factory function to create API clients with automatic authentication.
  * Uses the connectionManager's authApi for all requests.
  */
+var __assign = (this && this.__assign) || function () {
+    __assign = Object.assign || function(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+            s = arguments[i];
+            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
+                t[p] = s[p];
+        }
+        return t;
+    };
+    return __assign.apply(this, arguments);
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -42,8 +53,10 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     }
 };
 exports.__esModule = true;
-exports.createHttpClient = void 0;
+exports.createReactQueryHelpers = exports.createReactQueryHooks = exports.createHttpClient = void 0;
 var client_1 = require("@/components/connectionManager/http/client");
+var axios_1 = require("axios");
+var react_query_1 = require("@tanstack/react-query");
 /**
  * Build query params object for axios
  */
@@ -157,9 +170,14 @@ function handleAxiosResponse(data) {
  * Handle axios error and convert to ApiResponse format
  */
 function handleAxiosError(error) {
+    // Prefer axios.isAxiosError to detect axios errors reliably
+    if (axios_1["default"].isAxiosError(error)) {
+        client_1.handleApiError(error);
+        throw error;
+    }
+    // If it's a generic Error, rethrow after logging
     if (error instanceof Error) {
-        var axiosError = error;
-        client_1.handleApiError(axiosError);
+        console.error('Non-axios error in HTTP client:', error);
         throw error;
     }
     throw new Error('An unknown error occurred');
@@ -213,6 +231,8 @@ function handleAxiosError(error) {
 function createHttpClient(config) {
     var endpoint = config.endpoint;
     return {
+        // expose endpoint for react-query hook helpers
+        __endpoint: endpoint,
         /**
          * List entities with pagination, filtering, and search
          */
@@ -240,18 +260,24 @@ function createHttpClient(config) {
          * Get single entity by ID
          */
         get: function (id) {
+            var _a, _b;
             return __awaiter(this, void 0, Promise, function () {
-                var response, error_2;
-                return __generator(this, function (_a) {
-                    switch (_a.label) {
+                var response, error_2, is404;
+                return __generator(this, function (_c) {
+                    switch (_c.label) {
                         case 0:
-                            _a.trys.push([0, 2, , 3]);
+                            _c.trys.push([0, 2, , 3]);
                             return [4 /*yield*/, client_1.authApi.get("" + endpoint + id + "/")];
                         case 1:
-                            response = _a.sent();
+                            response = _c.sent();
                             return [2 /*return*/, handleAxiosResponse(response.data)];
                         case 2:
-                            error_2 = _a.sent();
+                            error_2 = _c.sent();
+                            is404 = (axios_1["default"].isAxiosError(error_2) && ((_a = error_2.response) === null || _a === void 0 ? void 0 : _a.status) === 404)
+                                || (error_2 && typeof error_2 === 'object' && 'response' in error_2 && ((_b = error_2.response) === null || _b === void 0 ? void 0 : _b.status) === 404);
+                            if (is404) {
+                                return [2 /*return*/, { data: undefined }];
+                            }
                             return [2 /*return*/, handleAxiosError(error_2)];
                         case 3: return [2 /*return*/];
                     }
@@ -391,6 +417,81 @@ function createHttpClient(config) {
             });
         },
         /**
+         * Bulk import from CSV or Excel file
+         */
+        bulkImport: function (file) {
+            return __awaiter(this, void 0, Promise, function () {
+                var fd, response, error_9;
+                return __generator(this, function (_a) {
+                    switch (_a.label) {
+                        case 0:
+                            _a.trys.push([0, 2, , 3]);
+                            fd = new FormData();
+                            fd.append('file', file);
+                            return [4 /*yield*/, client_1.authApi.post(endpoint + "bulk_import/", fd, { headers: { 'Content-Type': 'multipart/form-data' } })];
+                        case 1:
+                            response = _a.sent();
+                            return [2 /*return*/, handleAxiosResponse(response.data)];
+                        case 2:
+                            error_9 = _a.sent();
+                            return [2 /*return*/, handleAxiosError(error_9)];
+                        case 3: return [2 /*return*/];
+                    }
+                });
+            });
+        },
+        /**
+         * Download a bulk import template (CSV or XLSX) as Blob
+         */
+        bulkImportTemplate: function (export_format) {
+            return __awaiter(this, void 0, void 0, function () {
+                var response, contentType, error_10;
+                return __generator(this, function (_a) {
+                    switch (_a.label) {
+                        case 0:
+                            _a.trys.push([0, 2, , 3]);
+                            return [4 /*yield*/, client_1.authApi.get(endpoint + "bulk_import_template/", { params: { export_format: export_format }, responseType: 'arraybuffer' })];
+                        case 1:
+                            response = _a.sent();
+                            contentType = response.headers['content-type'] || 'application/octet-stream';
+                            return [2 /*return*/, new Blob([response.data], { type: contentType })];
+                        case 2:
+                            error_10 = _a.sent();
+                            return [2 /*return*/, handleAxiosError(error_10)];
+                        case 3: return [2 /*return*/];
+                    }
+                });
+            });
+        },
+        /**
+         * Export entities via backend (returns Blob)
+         */
+        bulkExport: function (params) {
+            return __awaiter(this, void 0, void 0, function () {
+                var query, response, contentType, error_11;
+                return __generator(this, function (_a) {
+                    switch (_a.label) {
+                        case 0:
+                            _a.trys.push([0, 2, , 3]);
+                            query = {};
+                            if (params === null || params === void 0 ? void 0 : params.fields)
+                                query.fields = params.fields.join(',');
+                            if (params === null || params === void 0 ? void 0 : params.file_format)
+                                query.file_format = params.file_format;
+                            return [4 /*yield*/, client_1.authApi.get(endpoint + "bulk_export/", { params: query, responseType: 'arraybuffer' })];
+                        case 1:
+                            response = _a.sent();
+                            contentType = response.headers['content-type'] || 'application/octet-stream';
+                            return [2 /*return*/, new Blob([response.data], { type: contentType })];
+                        case 2:
+                            error_11 = _a.sent();
+                            return [2 /*return*/, handleAxiosError(error_11)];
+                        case 3: return [2 /*return*/];
+                    }
+                });
+            });
+        },
+        /**
          * Execute custom action on entity
          *
          * @example
@@ -404,7 +505,7 @@ function createHttpClient(config) {
          */
         customAction: function (id, action, data) {
             return __awaiter(this, void 0, Promise, function () {
-                var response, error_9;
+                var response, error_12;
                 return __generator(this, function (_a) {
                     switch (_a.label) {
                         case 0:
@@ -412,11 +513,11 @@ function createHttpClient(config) {
                             return [4 /*yield*/, client_1.authApi.post("" + endpoint + id + "/" + String(action) + "/", data)];
                         case 1:
                             response = _a.sent();
-                            // We cannot know the runtime type; cast to the expected action result type
+                            // Convert response to ApiResponse typed to the action's expected type
                             return [2 /*return*/, handleAxiosResponse(response.data)];
                         case 2:
-                            error_9 = _a.sent();
-                            return [2 /*return*/, handleAxiosError(error_9)];
+                            error_12 = _a.sent();
+                            return [2 /*return*/, handleAxiosError(error_12)];
                         case 3: return [2 /*return*/];
                     }
                 });
@@ -425,3 +526,123 @@ function createHttpClient(config) {
     };
 }
 exports.createHttpClient = createHttpClient;
+/**
+ * Create React Query hooks bound to a client instance.
+ *
+ * Usage:
+ * const hooks = createReactQueryHooks(usersClient);
+ * const { useList, useGet, useCreate, useUpdate, useDelete, useCustomAction } = hooks;
+ */
+function createReactQueryHooks(client) {
+    var endpoint = client.__endpoint || 'api';
+    function useList(params, options) {
+        var _this = this;
+        return react_query_1.useQuery(__assign({ queryKey: [endpoint, 'list', params], queryFn: function () { return __awaiter(_this, void 0, void 0, function () {
+                var res;
+                return __generator(this, function (_a) {
+                    switch (_a.label) {
+                        case 0: return [4 /*yield*/, client.list(params)];
+                        case 1:
+                            res = _a.sent();
+                            return [2 /*return*/, res];
+                    }
+                });
+            }); } }, (options || {})));
+    }
+    function useGet(id, options) {
+        var _this = this;
+        return react_query_1.useQuery(__assign({ queryKey: [endpoint, 'get', id], queryFn: function () { return __awaiter(_this, void 0, void 0, function () {
+                var res;
+                return __generator(this, function (_a) {
+                    switch (_a.label) {
+                        case 0: return [4 /*yield*/, client.get(id)];
+                        case 1:
+                            res = _a.sent();
+                            return [2 /*return*/, res];
+                    }
+                });
+            }); }, enabled: !!id }, (options || {})));
+    }
+    function useCreate(options) {
+        var qc = react_query_1.useQueryClient();
+        var restOptions = __assign({}, (options || {}));
+        var originalOnSuccess = options === null || options === void 0 ? void 0 : options.onSuccess;
+        return react_query_1.useMutation(__assign({ mutationFn: function (data) { return client.create(data); }, onSuccess: function (data, variables, context, mutation) {
+                qc.invalidateQueries({ queryKey: [endpoint] });
+                if (originalOnSuccess)
+                    originalOnSuccess(data, variables, context, mutation);
+            } }, restOptions));
+    }
+    function useUpdate(options) {
+        var qc = react_query_1.useQueryClient();
+        var restOptions = __assign({}, (options || {}));
+        var originalOnSuccess = options === null || options === void 0 ? void 0 : options.onSuccess;
+        return react_query_1.useMutation(__assign({ mutationFn: function (payload) { return client.update(payload.id, payload.data); }, onSuccess: function (data, variables, context, mutation) {
+                qc.invalidateQueries({ queryKey: [endpoint] });
+                if (originalOnSuccess)
+                    originalOnSuccess(data, variables, context, mutation);
+            } }, restOptions));
+    }
+    function useDelete(options) {
+        var qc = react_query_1.useQueryClient();
+        var restOptions = __assign({}, (options || {}));
+        var originalOnSuccess = options === null || options === void 0 ? void 0 : options.onSuccess;
+        return react_query_1.useMutation(__assign({ mutationFn: function (id) { return client["delete"](id); }, onSuccess: function (data, variables, context, mutation) {
+                qc.invalidateQueries({ queryKey: [endpoint] });
+                if (originalOnSuccess)
+                    originalOnSuccess(data, variables, context, mutation);
+            } }, restOptions));
+    }
+    function useCustomAction(action, options) {
+        var qc = react_query_1.useQueryClient();
+        var restOptions = __assign({}, (options || {}));
+        var originalOnSuccess = options === null || options === void 0 ? void 0 : options.onSuccess;
+        return react_query_1.useMutation(__assign({ mutationFn: function (payload) { return client.customAction(payload.id, action, payload.data); }, onSuccess: function (data, variables, context, mutation) {
+                qc.invalidateQueries({ queryKey: [endpoint] });
+                if (originalOnSuccess)
+                    originalOnSuccess(data, variables, context, mutation);
+            } }, restOptions));
+    }
+    return {
+        useList: useList,
+        useGet: useGet,
+        useCreate: useCreate,
+        useUpdate: useUpdate,
+        useDelete: useDelete,
+        useCustomAction: useCustomAction
+    };
+}
+exports.createReactQueryHooks = createReactQueryHooks;
+/**
+ * Create imperative helpers that use the shared queryClient for fetching data
+ * outside React hooks (useful in non-component code or existing async helpers).
+ */
+var queryClient_1 = require("@/components/connectionManager/http/queryClient");
+function createReactQueryHelpers(client) {
+    var endpoint = client.__endpoint || 'api';
+    return {
+        fetchList: function (params) {
+            return __awaiter(this, void 0, void 0, function () {
+                return __generator(this, function (_a) {
+                    return [2 /*return*/, queryClient_1.queryClient.fetchQuery({ queryKey: [endpoint, 'list', params], queryFn: function () { return client.list(params); } })];
+                });
+            });
+        },
+        fetchGet: function (id) {
+            return __awaiter(this, void 0, void 0, function () {
+                return __generator(this, function (_a) {
+                    return [2 /*return*/, queryClient_1.queryClient.fetchQuery({ queryKey: [endpoint, 'get', id], queryFn: function () { return client.get(id); } })];
+                });
+            });
+        },
+        fetchCustom: function (id, action, data) {
+            return __awaiter(this, void 0, void 0, function () {
+                return __generator(this, function (_a) {
+                    // Note: will not type the response strictly here; callers can cast
+                    return [2 /*return*/, queryClient_1.queryClient.fetchQuery({ queryKey: [endpoint, 'action', id, action], queryFn: function () { return client.customAction(id, action, data); } })];
+                });
+            });
+        }
+    };
+}
+exports.createReactQueryHelpers = createReactQueryHelpers;

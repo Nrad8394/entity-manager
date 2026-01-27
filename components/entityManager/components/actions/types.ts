@@ -79,8 +79,10 @@ export interface ActionDefinition<T extends BaseEntity = BaseEntity> {
   /** Multiple selection allowed */
   allowMultiple?: boolean;
   
-  /** Permission required */
+  /** Single permission required */
   permission?: string;
+  /** Multiple permissions required (all must be present) */
+  permissions?: string[];
 }
 
 /**
@@ -305,6 +307,8 @@ export interface ActionContext<T extends BaseEntity = BaseEntity> {
   
   /** Custom data */
   customData?: Record<string, unknown>;
+  /** Current user's permission codenames */
+  permissions?: string[];
   
   /** Legacy convenience API surface kept for compatibility with older action handlers */
   api?: any;

@@ -109,8 +109,40 @@ export function getInitialValues<T extends BaseEntity>(
   if (entity) {
     fields.forEach(field => {
       const fieldName = String(field.name);
-      if (entity[field.name as keyof T] !== undefined) {
-        values[fieldName] = entity[field.name as keyof T];
+      const rawVal = entity[field.name as keyof T];
+      if (rawVal !== undefined) {
+        // If this is a relation field and the entity provides nested objects,
+        // unwrap to the configured valueField. Support both single relation
+        // (object) and multirelation (array of objects).
+        if ((field.type === 'relation' || field.type === 'multirelation') && field.relationConfig) {
+          try {
+            const rc = field.relationConfig;
+            if (Array.isArray(rawVal)) {
+              // Map array of objects or primitives to array of id/valueField
+              values[fieldName] = rawVal.map(v => {
+                if (v && typeof v === 'object' && rc.valueField in (v as Record<string, unknown>)) {
+                  return (v as Record<string, unknown>)[rc.valueField as string];
+                }
+                return v;
+              });
+            } else if (rawVal && typeof rawVal === 'object') {
+              // Single relation object -> extract valueField
+              if (rc.valueField in (rawVal as Record<string, unknown>)) {
+                values[fieldName] = (rawVal as Record<string, unknown>)[rc.valueField as string];
+              } else {
+                // Fallback to rawVal if valueField not present
+                values[fieldName] = rawVal;
+              }
+            } else {
+              // Primitive value (id) -> use as-is
+              values[fieldName] = rawVal;
+            }
+          } catch {
+            values[fieldName] = rawVal;
+          }
+        } else {
+          values[fieldName] = rawVal;
+        }
       }
     });
   }
@@ -242,10 +274,11 @@ async function validateRule(
 
     case 'pattern':
       if (typeof value === 'string' && rule.value) {
-        const pattern = new RegExp(String(rule.value));
-        if (!pattern.test(value)) {
-          return rule.message;
-        }
+          // Support both RegExp and string patterns
+          const pattern = rule.value instanceof RegExp ? rule.value : new RegExp(String(rule.value));
+          if (!pattern.test(value)) {
+            return rule.message;
+          }
       }
       break;
 

@@ -61,7 +61,11 @@ var form_1 = require("../components/form");
 var view_1 = require("../components/view");
 var exports_1 = require("../composition/exports");
 var exports_2 = require("../composition/exports");
+var createHttpClient_1 = require("../composition/api/createHttpClient");
 var sonner_1 = require("sonner");
+var button_1 = require("@/components/ui/button");
+var EntityImporter_1 = require("@/components/entityManager/components/importer/EntityImporter");
+var use_permissions_1 = require("@/hooks/use-permissions");
 /**
  * Build query parameters for API calls
  */
@@ -99,7 +103,7 @@ function getErrorMessage(error, defaultMessage) {
  */
 function EntityManagerContent(props) {
     var _this = this;
-    var _a;
+    var _a, _b;
     var rawConfig = props.config;
     // Normalize legacy/compact config shapes into canonical EntityManagerConfig
     var normalizedConfig = react_1["default"].useMemo(function () {
@@ -109,6 +113,7 @@ function EntityManagerContent(props) {
         var entity = base.config || {};
         var normalizedEntity = {
             name: entity.name || entity.entityName || entity.label || 'Entity',
+            primaryKeyField: entity.primaryKeyField || 'id',
             label: entity.label || entity.entityName || entity.name || 'Entity',
             labelPlural: entity.labelPlural || entity.entityNamePlural || entity.pluralName || "" + (entity.name || entity.entityName || 'Entities'),
             description: entity.description,
@@ -161,18 +166,65 @@ function EntityManagerContent(props) {
     }, [rawConfig]);
     // Use normalized config in place of raw config
     var config = normalizedConfig;
+    // Permissions hook (gives current user's permissions and helpers)
+    var permissionsHook = use_permissions_1.usePermissions();
+    // Resolve entity-level permission specs (which can be boolean, string, or string[])
+    var resolvedPermissions = react_1.useMemo(function () {
+        var spec = config.config.permissions || {};
+        var resolve = function (v, actionKey) {
+            // If unspecified, default to allow (backwards compatibility)
+            if (v === undefined)
+                return true;
+            // If boolean: interpret `true` as "require the user's entity-level permission"
+            // and `false` as explicitly denied.
+            if (typeof v === 'boolean') {
+                return v;
+            }
+            // If a string or array, treat as permission codename(s)
+            if (typeof v === 'string')
+                return permissionsHook.hasPermission(v);
+            if (Array.isArray(v))
+                return v.some(function (p) { return permissionsHook.hasPermission(p); });
+            return Boolean(v);
+        };
+        return {
+            create: resolve(spec.create, 'create'),
+            read: resolve(spec.read, 'read'),
+            update: resolve(spec.update, 'update'),
+            "delete": resolve(spec["delete"], 'delete'),
+            "export": resolve(spec["export"], 'export')
+        };
+    }, [config.config.permissions, permissionsHook]);
     // Use initialView/initialId from config or props (props take precedence)
     var initialViewToUse = (_a = config.initialView) !== null && _a !== void 0 ? _a : 'list';
     var initialIdToUse = config.initialId;
     var onViewChangeToUse = config.onViewChange;
-    var _b = react_1.useState(initialViewToUse), view = _b[0], setView = _b[1];
-    var _c = react_1.useState(initialIdToUse || null), selectedId = _c[0], setSelectedId = _c[1];
+    var _c = react_1.useState(initialViewToUse), view = _c[0], setView = _c[1];
+    var _d = react_1.useState(initialIdToUse || null), selectedId = _d[0], setSelectedId = _d[1];
     var fetchAttempted = react_1.useRef(false);
     var initialListFetchCompleted = react_1.useRef(false);
     var state = exports_1.useEntityState();
     var mutations = exports_2.useEntityMutations();
+    // Create react-query hooks bound to the provided API client when available.
+    // We keep calling the factory here (it's lightweight) so hooks are available
+    // to useQuery/useMutation consumers below. If no client is provided, hooks
+    // will be null and we fallback to imperative client calls.
+    var rq = config.apiClient ? createHttpClient_1.createReactQueryHooks(config.apiClient) : null;
     // Memoize pagination config to prevent unnecessary re-renders
     var memoizedPaginationConfig = react_1.useMemo(function () { return (__assign(__assign({}, config.config.list.paginationConfig), { page: state.state.page, pageSize: state.state.pageSize, totalCount: state.state.total })); }, [config.config.list.paginationConfig, state.state.page, state.state.pageSize, state.state.total]);
+    // Build a stable queryParams object used for react-query hooks when available
+    var currentQueryParams = react_1.useMemo(function () { var _a; return buildQueryParams(state.state.page, state.state.pageSize, (_a = state.state.sort) !== null && _a !== void 0 ? _a : null, state.state.search, state.state.filters); }, [state.state.page, state.state.pageSize, state.state.sort, state.state.search, state.state.filters]);
+    // Helper to normalize entity id from common shapes (id, pk, uuid, slug)
+    var normalizeEntity = react_1.useCallback(function (e) {
+        var _a, _b, _c, _d, _e;
+        if (!e)
+            return e;
+        var id = (_e = (_d = (_c = (_b = (_a = e.id) !== null && _a !== void 0 ? _a : e.pk) !== null && _b !== void 0 ? _b : e.uuid) !== null && _c !== void 0 ? _c : e.slug) !== null && _d !== void 0 ? _d : e.name) !== null && _e !== void 0 ? _e : e.pk_id;
+        return __assign(__assign({}, e), { id: id });
+    }, []);
+    // Bind react-query list/get hooks at top level (hooks must be called unconditionally)
+    var listQuery = rq ? rq.useList(currentQueryParams, { enabled: false }) : null;
+    var getQuery = rq ? rq.useGet(selectedId !== null && selectedId !== void 0 ? selectedId : undefined, { enabled: false }) : null;
     // Watch for initialView and initialId changes from parent
     react_1.useEffect(function () {
         setView(initialViewToUse);
@@ -191,46 +243,78 @@ function EntityManagerContent(props) {
      * Fetch entities from API with given parameters
      */
     var fetchEntities = react_1.useCallback(function (page, pageSize, sort, search, filters) { return __awaiter(_this, void 0, void 0, function () {
-        var queryParams, response_1, normalized, data, error_1, errorMessage;
-        var _a;
-        return __generator(this, function (_b) {
-            switch (_b.label) {
+        var queryParams, result, response, respAny_1, normalized, data, response_1, normalized, data, error_1, errorMessage;
+        var _a, _b;
+        return __generator(this, function (_c) {
+            switch (_c.label) {
                 case 0:
                     if (!config.apiClient)
                         return [2 /*return*/];
                     state.setLoading(true);
                     queryParams = buildQueryParams(page, pageSize, sort, search, filters);
-                    _b.label = 1;
+                    _c.label = 1;
                 case 1:
-                    _b.trys.push([1, 3, 4, 5]);
-                    return [4 /*yield*/, config.apiClient.list(queryParams)];
+                    _c.trys.push([1, 6, 7, 8]);
+                    if (!(rq && listQuery)) return [3 /*break*/, 3];
+                    return [4 /*yield*/, listQuery.refetch()];
                 case 2:
-                    response_1 = _b.sent();
+                    result = _c.sent();
+                    response = result.data;
+                    respAny_1 = response;
                     normalized = (function () {
                         var _a;
-                        if (response_1 && typeof response_1 === 'object') {
-                            if ('data' in response_1)
-                                return { data: response_1.data, meta: response_1.meta };
-                            if ('results' in response_1)
-                                return { data: response_1.results, meta: { total: (_a = response_1.count) !== null && _a !== void 0 ? _a : response_1.results.length } };
+                        if (respAny_1 && typeof respAny_1 === 'object') {
+                            if ('data' in respAny_1) {
+                                // Ensure data is an array
+                                var dataValue = Array.isArray(respAny_1.data) ? respAny_1.data : [];
+                                return { data: dataValue, meta: respAny_1.meta };
+                            }
+                            if ('results' in respAny_1) {
+                                var resultsValue = Array.isArray(respAny_1.results) ? respAny_1.results : [];
+                                return { data: resultsValue, meta: { total: (_a = respAny_1.count) !== null && _a !== void 0 ? _a : resultsValue.length } };
+                            }
                         }
-                        return { data: Array.isArray(response_1) ? response_1 : [] };
+                        return { data: Array.isArray(respAny_1) ? respAny_1 : [] };
                     })();
-                    data = normalized.data || [];
+                    data = Array.isArray(normalized.data) ? normalized.data.map(normalizeEntity) : [];
                     state.setEntities(data);
                     if (((_a = normalized.meta) === null || _a === void 0 ? void 0 : _a.total) !== undefined) {
                         state.setTotal(normalized.meta.total);
                     }
                     return [3 /*break*/, 5];
-                case 3:
-                    error_1 = _b.sent();
+                case 3: return [4 /*yield*/, config.apiClient.list(queryParams)];
+                case 4:
+                    response_1 = _c.sent();
+                    normalized = (function () {
+                        var _a;
+                        if (response_1 && typeof response_1 === 'object') {
+                            if ('data' in response_1) {
+                                var dataValue = Array.isArray(response_1.data) ? response_1.data : [];
+                                return { data: dataValue, meta: response_1.meta };
+                            }
+                            if ('results' in response_1) {
+                                var resultsValue = Array.isArray(response_1.results) ? response_1.results : [];
+                                return { data: resultsValue, meta: { total: (_a = response_1.count) !== null && _a !== void 0 ? _a : resultsValue.length } };
+                            }
+                        }
+                        return { data: Array.isArray(response_1) ? response_1 : [] };
+                    })();
+                    data = Array.isArray(normalized.data) ? normalized.data.map(normalizeEntity) : [];
+                    state.setEntities(data);
+                    if (((_b = normalized.meta) === null || _b === void 0 ? void 0 : _b.total) !== undefined) {
+                        state.setTotal(normalized.meta.total);
+                    }
+                    _c.label = 5;
+                case 5: return [3 /*break*/, 8];
+                case 6:
+                    error_1 = _c.sent();
                     errorMessage = getErrorMessage(error_1, 'Failed to load data');
                     state.setError(errorMessage);
-                    return [3 /*break*/, 5];
-                case 4:
+                    return [3 /*break*/, 8];
+                case 7:
                     state.setLoading(false);
                     return [7 /*endfinally*/];
-                case 5: return [2 /*return*/];
+                case 8: return [2 /*return*/];
             }
         });
     }); }, [config, state]);
@@ -253,7 +337,7 @@ function EntityManagerContent(props) {
                         return [4 /*yield*/, config.apiClient.get(id)];
                     case 2:
                         response = _a.sent();
-                        entity = ('data' in response) ? response.data : response;
+                        entity = normalizeEntity(('data' in response) ? response.data : response);
                         if (merge) {
                             state.updateEntity(entity);
                         }
@@ -274,7 +358,7 @@ function EntityManagerContent(props) {
                 }
             });
         });
-    }, [config.apiClient, state]);
+    }, [config.apiClient, state, normalizeEntity]);
     // Auto-fetch data on mount if API client is available
     react_1.useEffect(function () {
         if (!config.apiClient || fetchAttempted.current) {
@@ -307,51 +391,67 @@ function EntityManagerContent(props) {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [config.apiClient, initialViewToUse, initialIdToUse]);
-    // Use ref to track previous filters and only update when content actually changes
-    var prevFiltersRef = react_1.useRef('');
+    // Use refs to track previous filters/search/sort to avoid unnecessary refetches
+    var prevFiltersKeyRef = react_1.useRef('');
     var prevFiltersObjectRef = react_1.useRef([]);
     var stableFilters = react_1.useMemo(function () {
         var filtersJson = JSON.stringify(state.state.filters);
-        if (filtersJson !== prevFiltersRef.current) {
-            prevFiltersRef.current = filtersJson;
-            prevFiltersObjectRef.current = state.state.filters;
-            return state.state.filters;
+        // If key matches previous key, return the same object reference to avoid re-renders
+        if (filtersJson === prevFiltersKeyRef.current) {
+            return prevFiltersObjectRef.current;
         }
-        // Return the same reference if content hasn't changed
-        return prevFiltersObjectRef.current;
+        // Otherwise return the new filters (do not mutate prevFiltersKeyRef here - update after fetch)
+        return state.state.filters;
     }, [state.state.filters]);
     // Refetch data when sorting, search, or filters change (but not pagination, handled directly)
     // Track previous values to prevent unnecessary refetches
     var prevSortRef = react_1.useRef(null);
     var prevSearchRef = react_1.useRef('');
+    var searchDebounceRef = react_1.useRef(null);
     react_1.useEffect(function () {
-        // Don't fetch if:
-        // - No API client
-        // - Not in list view
-        // - Initial list fetch is still in progress (loading and not yet completed)
         if (!config.apiClient || view !== 'list')
             return;
         if (!initialListFetchCompleted.current)
             return;
         var _a = state.state, page = _a.page, pageSize = _a.pageSize, sort = _a.sort, search = _a.search;
-        // Create stable sort key for comparison
         var sortKey = sort ? sort.field + "-" + sort.direction : null;
-        // Only refetch if sort, search, or filters actually changed
+        var filtersKey = JSON.stringify(state.state.filters);
         var sortChanged = sortKey !== prevSortRef.current;
         var searchChanged = search !== prevSearchRef.current;
-        var filtersKey = JSON.stringify(stableFilters);
-        if (!sortChanged && !searchChanged) {
-            // Check if filters changed by comparing with ref
-            if (filtersKey === prevFiltersRef.current) {
-                return; // Nothing changed, skip fetch
+        var filtersChanged = filtersKey !== prevFiltersKeyRef.current;
+        // If nothing changed, skip
+        if (!sortChanged && !searchChanged && !filtersChanged)
+            return;
+        // If search changed but filters/sort did not, debounce the search to avoid rapid requests
+        if (searchChanged && !sortChanged && !filtersChanged) {
+            if (searchDebounceRef.current) {
+                clearTimeout(searchDebounceRef.current);
             }
+            // eslint-disable-next-line @typescript-eslint/no-implied-eval
+            searchDebounceRef.current = window.setTimeout(function () {
+                prevSearchRef.current = search;
+                prevFiltersKeyRef.current = filtersKey;
+                prevFiltersObjectRef.current = state.state.filters;
+                prevSortRef.current = sortKey;
+                fetchEntities(page, pageSize, sort !== null && sort !== void 0 ? sort : null, search, state.state.filters);
+                searchDebounceRef.current = null;
+            }, 350);
+            return;
         }
-        // Update refs
+        // Immediate fetch for sort or filters changes
         prevSortRef.current = sortKey;
         prevSearchRef.current = search;
+        prevFiltersKeyRef.current = filtersKey;
+        prevFiltersObjectRef.current = state.state.filters;
         fetchEntities(page, pageSize, sort !== null && sort !== void 0 ? sort : null, search, stableFilters);
         // Using specific state properties to prevent infinite loop - state.state changes on every update
         // eslint-disable-next-line react-hooks/exhaustive-deps
+        return function () {
+            if (searchDebounceRef.current) {
+                clearTimeout(searchDebounceRef.current);
+                searchDebounceRef.current = null;
+            }
+        };
     }, [config.apiClient, view, state.state.sort, state.state.search, state.state.page, state.state.pageSize, stableFilters, fetchEntities]);
     // listen for view change and call onviewchange callback
     react_1.useEffect(function () {
@@ -379,22 +479,131 @@ function EntityManagerContent(props) {
     var actionsWithContext = react_1.useMemo(function () {
         if (!config.config.actions)
             return undefined;
-        return __assign(__assign({}, config.config.actions), { context: __assign(__assign({}, config.config.actions.context), { refresh: refreshData, customData: {
+        // Clone actions to avoid mutating original config
+        var raw = config.config.actions;
+        var clone = __assign({}, raw);
+        // Helper to infer required entity-level permission for actions that don't declare action-level permissions
+        var inferEntityRequirement = function (action) {
+            // If action explicitly declares a permission, don't infer
+            if (action.permission || (Array.isArray(action.permissions) && action.permissions.length > 0))
+                return {};
+            var id = String(action.id || '').toLowerCase();
+            var label = String(action.label || '').toLowerCase();
+            if (id.includes('delete') || label.includes('delete') || action.variant === 'destructive')
+                return { require: 'delete' };
+            if (id.includes('export') || label.includes('export'))
+                return { require: 'export' };
+            if (id.includes('create') || label.includes('create') || id.includes('add'))
+                return { require: 'create' };
+            return {};
+        };
+        // Filter helper applying resolved entity permissions
+        var filterArray = function (arr) {
+            if (!Array.isArray(arr))
+                return arr;
+            return arr.filter(function (a) {
+                var inferred = inferEntityRequirement(a);
+                if (inferred.require) {
+                    return Boolean(resolvedPermissions[inferred.require]);
+                }
+                return true;
+            });
+        };
+        // Support both normalized `actions.actions` and legacy { row, bulk } shapes
+        var normalizedActions = Array.isArray(raw.actions) ? raw.actions : (Array.isArray(raw.row) ? raw.row : []);
+        var normalizedBulk = Array.isArray(raw.bulk) ? raw.bulk : [];
+        var filteredActions = filterArray(normalizedActions);
+        var filteredBulk = filterArray(normalizedBulk);
+        return __assign(__assign({}, raw), { actions: filteredActions, bulk: filteredBulk, context: __assign(__assign({}, raw.context), { refresh: refreshData, customData: {
                     allData: state.state.entities
-                } }) });
-    }, [config.config.actions, refreshData, state.state.entities]);
+                }, 
+                // Permissions context: provide current user's permission codenames to action handlers
+                permissions: permissionsHook.userPermissions, 
+                // Also include resolved entity-level permissions for action handlers
+                entityPermissions: resolvedPermissions }) });
+    }, [config.config.actions, refreshData, state.state.entities, permissionsHook.userPermissions, resolvedPermissions]);
+    // Importer modal state
+    var _e = react_1["default"].useState(false), importerOpen = _e[0], setImporterOpen = _e[1];
+    // Helper to download blob
+    var downloadBlob = function (blob, filename) {
+        var url = window.URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    };
+    // Build default toolbar actions (Import / Template / Export) when apiClient exists
+    var toolbarActionsNode = react_1.useMemo(function () {
+        if (!config.apiClient)
+            return null;
+        // Template download is handled inside the Importer modal
+        var handleExport = function (format) {
+            if (format === void 0) { format = 'csv'; }
+            return __awaiter(_this, void 0, void 0, function () {
+                var rawFields, fields, blob, baseName, fname, err_1;
+                var _a, _b;
+                return __generator(this, function (_c) {
+                    switch (_c.label) {
+                        case 0:
+                            _c.trys.push([0, 2, , 3]);
+                            rawFields = (_b = (_a = config.config.exporter) === null || _a === void 0 ? void 0 : _a.fields) !== null && _b !== void 0 ? _b : undefined;
+                            fields = rawFields ? rawFields.map(function (f) {
+                                var _a, _b, _c, _d;
+                                if (typeof f === 'string')
+                                    return f;
+                                if (f == null)
+                                    return String(f);
+                                // Prefer `key`, then `name`, then `field`
+                                if (typeof f === 'object')
+                                    return String((_d = (_c = (_b = (_a = f.key) !== null && _a !== void 0 ? _a : f.name) !== null && _b !== void 0 ? _b : f.field) !== null && _c !== void 0 ? _c : f.value) !== null && _d !== void 0 ? _d : JSON.stringify(f));
+                                return String(f);
+                            }) : undefined;
+                            return [4 /*yield*/, config.apiClient.bulkExport({ fields: fields, file_format: format })];
+                        case 1:
+                            blob = _c.sent();
+                            baseName = config.config.label || config.config.name || 'export';
+                            fname = baseName + "_Export." + (format === 'csv' ? 'csv' : 'xlsx');
+                            downloadBlob(blob, fname);
+                            sonner_1.toast.success('Export started');
+                            return [3 /*break*/, 3];
+                        case 2:
+                            err_1 = _c.sent();
+                            sonner_1.toast.error('Export failed');
+                            return [3 /*break*/, 3];
+                        case 3: return [2 /*return*/];
+                    }
+                });
+            });
+        };
+        return (react_1["default"].createElement("div", { className: "flex items-center gap-2" },
+            resolvedPermissions.create && (react_1["default"].createElement(button_1.Button, { variant: "outline", size: "sm", onClick: function () { return setImporterOpen(true); } }, "Import")),
+            resolvedPermissions["export"] && (react_1["default"].createElement(button_1.Button, { variant: "outline", size: "sm", onClick: function () { return handleExport('csv'); } }, "Export (CSV)"))));
+    }, [config.apiClient, config.config.name, config.config.exporter, resolvedPermissions, config.config.label]);
     // Handle edit
     var handleEdit = react_1.useCallback(function (entity) {
+        // Respect entity-level update permission
+        if (!resolvedPermissions.update) {
+            sonner_1.toast.error('You do not have permission to edit this item');
+            return;
+        }
         setView('edit');
-        setSelectedId(entity.id);
-        fetchSingleEntity(entity.id, true);
-    }, [fetchSingleEntity]);
+        setSelectedId(entity[config.config.primaryKeyField || 'id']);
+        fetchSingleEntity(entity[config.config.primaryKeyField || 'id'], true);
+    }, [fetchSingleEntity, resolvedPermissions]);
     // Handle view
     var handleView = react_1.useCallback(function (entity) {
+        // Respect entity-level read permission
+        if (!resolvedPermissions.read) {
+            sonner_1.toast.error('You do not have permission to view this item');
+            return;
+        }
         setView('view');
-        setSelectedId(entity.id);
-        fetchSingleEntity(entity.id, true);
-    }, [fetchSingleEntity]);
+        setSelectedId(entity[config.config.primaryKeyField || 'id']);
+        fetchSingleEntity(entity[config.config.primaryKeyField || 'id'], true);
+    }, [fetchSingleEntity, resolvedPermissions]);
     // Handle back to list
     var handleBack = react_1.useCallback(function () {
         setView('list');
@@ -478,7 +687,39 @@ function EntityManagerContent(props) {
     if (view === 'list') {
         return (react_1["default"].createElement("div", { className: "space-y-4" },
             renderBreadcrumbs(),
-            react_1["default"].createElement(list_1.EntityList, { data: state.state.entities, columns: config.config.list.columns, view: "table", toolbar: config.config.list.toolbar, selectable: config.config.list.selectable, multiSelect: config.config.list.multiSelect, selectedIds: state.state.selectedIds, onSelectionChange: state.setSelected, onRowClick: config.config.list.onRowClick || handleView, onRowDoubleClick: config.config.list.onRowDoubleClick || handleEdit, pagination: true, paginationConfig: memoizedPaginationConfig, onPaginationChange: handlePaginationChange, sortable: config.config.list.sortable, sortConfig: state.state.sort, onSortChange: state.setSort, filterable: config.config.list.filterable, filterConfigs: state.state.filters, onFilterChange: state.setFilters, searchable: config.config.list.searchable, searchValue: state.state.search, onSearchChange: state.setSearch, searchPlaceholder: config.config.list.searchPlaceholder, emptyMessage: config.config.list.emptyMessage, loading: state.state.loading, error: state.state.error, actions: actionsWithContext, className: config.config.list.className, hover: config.config.list.hover, striped: config.config.list.striped, bordered: config.config.list.bordered, titleField: config.config.list.titleField, subtitleField: config.config.list.subtitleField, imageField: config.config.list.imageField, dateField: config.config.list.dateField })));
+            react_1["default"].createElement(react_1["default"].Fragment, null,
+                react_1["default"].createElement(list_1.EntityList, { data: state.state.entities, columns: config.config.list.columns, view: "table", toolbar: __assign(__assign({}, (config.config.list.toolbar || {})), { actions: (react_1["default"].createElement(react_1["default"].Fragment, null, (_b = config.config.list.toolbar) === null || _b === void 0 ? void 0 :
+                            _b.actions,
+                            toolbarActionsNode)) }), selectable: config.config.list.selectable, multiSelect: config.config.list.multiSelect, selectedIds: state.state.selectedIds, onSelectionChange: state.setSelected, onRowClick: config.config.list.onRowClick || handleView, onRowDoubleClick: config.config.list.onRowDoubleClick || handleEdit, pagination: true, paginationConfig: memoizedPaginationConfig, onPaginationChange: handlePaginationChange, sortable: config.config.list.sortable, sortConfig: state.state.sort, onSortChange: state.setSort, filterable: config.config.list.filterable, filterConfigs: state.state.filters, onFilterChange: state.setFilters, searchable: config.config.list.searchable, searchValue: state.state.search, onSearchChange: state.setSearch, searchPlaceholder: config.config.list.searchPlaceholder, emptyMessage: config.config.list.emptyMessage, onCreate: function () {
+                        // Switch to create form when user clicks create from empty state
+                        setView('create');
+                        setSelectedId(null);
+                    }, loading: state.state.loading, error: state.state.error, actions: actionsWithContext, className: config.config.list.className, hover: config.config.list.hover, striped: config.config.list.striped, bordered: config.config.list.bordered, titleField: config.config.list.titleField, subtitleField: config.config.list.subtitleField, imageField: config.config.list.imageField, dateField: config.config.list.dateField }),
+                importerOpen && (react_1["default"].createElement(EntityImporter_1["default"], { apiClient: config.apiClient, open: importerOpen, onClose: function () { return setImporterOpen(false); }, entityName: config.config.label || config.config.name, onImported: function (summary) { return __awaiter(_this, void 0, void 0, function () {
+                        return __generator(this, function (_a) {
+                            switch (_a.label) {
+                                case 0:
+                                    if (!summary) return [3 /*break*/, 3];
+                                    // Show import result toast
+                                    sonner_1.toast.success("Imported " + summary.imported + " items");
+                                    if (summary.errors && summary.errors.length > 0) {
+                                        sonner_1.toast.error(summary.errors.length + " errors occurred during import");
+                                        // Keep importer open so user can review errors in the result step
+                                        console.warn('Import errors:', summary.errors);
+                                    }
+                                    if (!(summary.imported > 0 && refreshData)) return [3 /*break*/, 2];
+                                    return [4 /*yield*/, refreshData()];
+                                case 1:
+                                    _a.sent();
+                                    _a.label = 2;
+                                case 2: return [3 /*break*/, 4];
+                                case 3:
+                                    sonner_1.toast.error('Import completed with no summary');
+                                    _a.label = 4;
+                                case 4: return [2 /*return*/];
+                            }
+                        });
+                    }); } })))));
     }
     // Render form view (create/edit)
     if (view === 'create' || view === 'edit') {
@@ -517,11 +758,11 @@ function EntityManager(props) {
     var config = props.config, _b = props.className, className = _b === void 0 ? '' : _b, children = props.children;
     // Custom layout via children
     if (children) {
-        return react_1["default"].createElement("div", { className: "entity-manager " + className }, children);
+        return react_1["default"].createElement("div", { className: "timex " + className }, children);
     }
     // Default layout with providers
-    return (react_1["default"].createElement("div", { className: "entity-manager " + className },
-        react_1["default"].createElement(exports_1.EntityStateProvider, { initialEntities: config.initialData, initialPageSize: ((_a = config.config.list.paginationConfig) === null || _a === void 0 ? void 0 : _a.pageSize) || 10, initialSort: config.config.list.sortConfig }, config.apiClient ? (react_1["default"].createElement(exports_2.EntityApiProvider, { client: config.apiClient },
+    return (react_1["default"].createElement("div", { className: "nnp-timex " + className },
+        react_1["default"].createElement(exports_1.EntityStateProvider, { initialEntities: config.initialData, initialPageSize: ((_a = config.config.list.paginationConfig) === null || _a === void 0 ? void 0 : _a.pageSize) || 10, initialSort: config.config.list.sortConfig, initialFilters: config.initialFilters, primaryKeyField: config.config.primaryKeyField || 'id' }, config.apiClient ? (react_1["default"].createElement(exports_2.EntityApiProvider, { client: config.apiClient },
             react_1["default"].createElement(EntityManagerContent, __assign({}, props)))) : (react_1["default"].createElement(EntityManagerContent, __assign({}, props))))));
 }
 exports.EntityManager = EntityManager;

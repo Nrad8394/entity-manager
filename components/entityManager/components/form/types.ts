@@ -128,6 +128,9 @@ export interface FormField<T extends BaseEntity = BaseEntity> {
   /** Custom renderer */
   render?: (props: FieldRenderProps<T>) => React.ReactNode;
 
+  /** Custom component for 'custom' field type */
+  customComponent?: React.ComponentType<CustomComponentProps<any>>;
+
   /** Transform value before save */
   transform?: (value: unknown) => unknown;
 
@@ -148,6 +151,20 @@ export interface FieldOption {
 }
 
 /**
+ * Custom component props (for 'custom' field type)
+ * Generic type that allows any value type for the custom component
+ */
+export interface CustomComponentProps<T = unknown> {
+  value?: T;
+  onChange: (value: T) => void;
+  disabled?: boolean;
+  error?: string;
+  placeholder?: string;
+  helpText?: string;
+  [key: string]: unknown;
+}
+
+/**
  * Relation configuration
  */
 export interface RelationConfig<R extends BaseEntity = BaseEntity> {
@@ -160,11 +177,14 @@ export interface RelationConfig<R extends BaseEntity = BaseEntity> {
   /** Value field */
   valueField: keyof R | string;
 
-  /** Search fields */
-  searchFields?: Array<keyof R | string>;
-
   /** Fetch function */
   fetchOptions: (search?: string) => Promise<R[]>;
+
+  /** Fetch single entity by id (optional) - used to ensure selected item(s) are loaded */
+  fetchById?: (id: string) => Promise<R | null>;
+
+  /** Fetch multiple entities by ids (optional) */
+  fetchByIds?: (ids: string[]) => Promise<R[]>;
 
   /** Create new option */
   onCreate?: (value: string) => Promise<R>;

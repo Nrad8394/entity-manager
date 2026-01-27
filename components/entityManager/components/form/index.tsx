@@ -101,6 +101,13 @@ export function EntityForm<T extends BaseEntity = BaseEntity>({
     };
   });
 
+  // Store onChange in a ref to avoid infinite loops from prop changes
+  const onChangeRef = useRef(onChange);
+  
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
+
   /**
    * Set field value
    */
@@ -109,8 +116,6 @@ export function EntityForm<T extends BaseEntity = BaseEntity>({
       const newValues = { ...prev.values, [fieldName]: value };
       const newDirty = new Set(prev.dirty);
       newDirty.add(fieldName);
-
-      onChange?.(newValues);
 
       // Validate on change if enabled
       if (validateOnChange) {
@@ -127,13 +132,18 @@ export function EntityForm<T extends BaseEntity = BaseEntity>({
         }
       }
 
+      // Notify parent immediately with new values (use setTimeout to defer until after setState completes)
+      setTimeout(() => {
+        onChangeRef.current?.(newValues as T);
+      }, 0);
+
       return {
         ...prev,
         values: newValues,
         dirty: newDirty,
       };
     });
-  }, [onChange, validateOnChange, fields]);
+  }, [validateOnChange, fields]);
 
   /**
    * Set field touched
@@ -162,6 +172,32 @@ export function EntityForm<T extends BaseEntity = BaseEntity>({
       return { ...prev, touched: newTouched };
     });
   }, [validateOnBlur, fields]);
+
+  // Sync form values when `entity` or `initialValues` props change (useful when entity is loaded asynchronously)
+  useEffect(() => {
+    // Only update when an entity is provided (edit mode) or when explicit initialValues change.
+    if (!entity && !initialValues) return;
+
+    const newVals = getInitialValues(fields, entity, initialValues);
+    // Avoid updating state if values are identical to prevent unnecessary re-renders
+    try {
+      const prevVals = state.values as Record<string, unknown>;
+      const prevJson = JSON.stringify(prevVals || {});
+      const newJson = JSON.stringify(newVals || {});
+      if (prevJson === newJson) return;
+    } catch {
+      // If serialization fails for some reason, fall back to always updating
+    }
+
+    setState(prev => ({
+      ...prev,
+      values: newVals,
+      // reset errors/touched/dirtiness when loading new entity to avoid showing stale validation
+      errors: {},
+      touched: new Set<string>(),
+      dirty: new Set<string>(),
+    }));
+  }, [entity, initialValues, fields]);
 
   /**
    * Validate entire form
@@ -239,7 +275,7 @@ export function EntityForm<T extends BaseEntity = BaseEntity>({
         submitError: error instanceof Error ? error.message : 'An error occurred during submission'
       }));
     }
-  }, [fields, state.values, validateFormAsync, onSubmit, resetOnSubmit, initialValues, layout, sections, onValidate]);
+  }, [fields, validateFormAsync, onSubmit, resetOnSubmit, initialValues, layout, sections, onValidate]);
 
   /**
    * Handle reset
@@ -457,25 +493,39 @@ export function EntityForm<T extends BaseEntity = BaseEntity>({
     const sortedTabs = sortTabs(tabs);
     const groupedFields = groupFieldsByTabs(fields, sortedTabs);
 
+    // Compute tab error status directly
+    const tabErrorStatus: Record<string, boolean> = {};
+    sortedTabs.forEach(tab => {
+      const tabFields = groupedFields.get(tab.id) || [];
+      const hasTabErrors = tabFields.some(field => state.errors[String(field.name)]);
+      tabErrorStatus[tab.id] = hasTabErrors;
+    });
+
     return (
       <div className="space-y-4">
         <div className="border-b border-border overflow-x-auto" role="tablist">
           <div className="flex space-x-1 min-w-max px-1">
-            {sortedTabs.map(tab => (
-              <button
-                key={tab.id}
-                type="button"
-                className={`flex items-center gap-2 px-4 py-2.5 font-medium text-sm transition-all whitespace-nowrap border-b-2 ${state.currentTab === tab.id
-                  ? 'border-primary text-primary bg-primary/5'
-                  : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/50'
-                  }`}
-                onClick={() => setState(prev => ({ ...prev, currentTab: tab.id }))}
-                role="tab"
-              >
-                {tab.icon && <span className="text-base">{tab.icon}</span>}
-                {tab.label}
-              </button>
-            ))}
+            {sortedTabs.map(tab => {
+              const hasErrors = tabErrorStatus[tab.id];
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  className={`flex items-center gap-2 px-4 py-2.5 font-medium text-sm transition-all whitespace-nowrap border-b-2 relative ${state.currentTab === tab.id
+                    ? 'border-primary text-primary bg-primary/5'
+                    : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/50'
+                    } ${hasErrors ? 'text-destructive' : ''}`}
+                  onClick={() => setState(prev => ({ ...prev, currentTab: tab.id }))}
+                  role="tab"
+                >
+                  {tab.icon && <span className="text-base">{tab.icon}</span>}
+                  {tab.label}
+                  {hasErrors && (
+                    <AlertTriangle className="w-4 h-4 text-destructive ml-1 flex-shrink-0" />
+                  )}
+                </button>
+              );
+            })}
           </div>
         </div>
         <div className="min-h-[300px]">
@@ -567,14 +617,14 @@ export function EntityForm<T extends BaseEntity = BaseEntity>({
                 <button
                   key={section.id}
                   type="button"
-                  className={`px-4 py-2.5 font-medium text-sm transition-all whitespace-nowrap border-b-2 ${index === currentTabIndex
+                  className={`flex items-center gap-2 px-4 py-2.5 font-medium text-sm transition-all whitespace-nowrap border-b-2 ${index === currentTabIndex
                     ? 'border-primary text-primary bg-primary/5'
                     : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/50'
-                    }`}
+                    } ${hasErrors ? 'text-destructive' : ''}`}
                   onClick={() => setState(prev => ({ ...prev, currentTabIndex: index }))}
                   role="tab"
                 >
-                  {hasErrors && <AlertTriangle className="w-4 h-4 text-destructive mr-1" />}
+                  {hasErrors && <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />}
                   {section.label}
                 </button>
               );
@@ -956,6 +1006,16 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
   const [multiRelationError, setMultiRelationError] = useState<string | null>(null);
   const multiRelationLoadedRef = useRef(false);
   const [debouncedMultiRelationSearch, setDebouncedMultiRelationSearch] = useState('');
+  // Local selected ids for multirelation to allow optimistic UI updates
+  const [localSelectedIds, setLocalSelectedIds] = useState<string[]>(() => {
+    if (Array.isArray(value)) return value.map(v => String(v));
+    if (typeof value === 'string') return value.includes(',') ? value.split(',').map(s => s.trim()).filter(Boolean) : (value ? [value] : []);
+    if (value === null || value === undefined) return [];
+    return [String(value)];
+  });
+  const [viewModalOpen, setViewModalOpen] = useState(false);
+  const [modalItems, setModalItems] = useState<Record<string, unknown>[]>([]);
+  const [modalLoading, setModalLoading] = useState(false);
 
   // Debounce for relation search
   useEffect(() => {
@@ -985,7 +1045,29 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
         try {
           const cfg = field.relationConfig as NonNullable<typeof field.relationConfig>;
           const entities = await cfg.fetchOptions('');
-          setRelationOptions(entities as unknown as Record<string, unknown>[]);
+          let opts = entities as unknown as Record<string, unknown>[];
+
+          // If the currently selected value is not among the options, try to fetch it directly
+          const selectedId = String(value);
+          const found = opts.some(ent => String(ent[cfg.valueField]) === selectedId);
+          if (!found) {
+            if (cfg.fetchById) {
+              const single = await cfg.fetchById(selectedId);
+              if (single) opts = [single as unknown as Record<string, unknown>, ...opts];
+            } else {
+              // Fallback: try fetching via fetchOptions using the id as search term
+              try {
+                const bySearch = await cfg.fetchOptions(selectedId);
+                if (Array.isArray(bySearch) && bySearch.length > 0) {
+                  opts = [...(bySearch as unknown as Record<string, unknown>[]), ...opts];
+                }
+              } catch {
+                // ignore
+              }
+            }
+          }
+
+          setRelationOptions(opts);
           relationLoadedRef.current = true;
         } catch (err) {
           setRelationError(err instanceof Error ? err.message : 'Failed to load options');
@@ -1006,6 +1088,13 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
         try {
           const cfg = field.relationConfig as NonNullable<typeof field.relationConfig>;
           const entities = await cfg.fetchOptions(debouncedRelationSearch);
+          console.log('Fetched relation options:', { 
+            count: entities.length, 
+            displayField: cfg.displayField,
+            valueField: cfg.valueField,
+            firstItem: entities[0],
+            allItems: entities 
+          });
           setRelationOptions(entities as unknown as Record<string, unknown>[]);
           if (!relationLoadedRef.current) relationLoadedRef.current = true;
         } catch (err) {
@@ -1028,7 +1117,47 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
         try {
           const cfg = field.relationConfig as NonNullable<typeof field.relationConfig>;
           const entities = await cfg.fetchOptions(debouncedMultiRelationSearch);
-          setMultiRelationOptions(entities as unknown as Record<string, unknown>[]);
+          let opts = entities as unknown as Record<string, unknown>[];
+
+          // If there are already selected ids that are not in the fetched options,
+          // attempt to fetch them directly and prepend so selected chips render.
+          const selectedIds = localSelectedIds;
+          const missing = selectedIds.filter(id => !opts.some(ent => String(ent[cfg.valueField]) === String(id)));
+          if (missing.length > 0) {
+            if (cfg.fetchByIds) {
+              try {
+                const fetched = await cfg.fetchByIds(missing);
+                opts = [...(fetched as unknown as Record<string, unknown>[]), ...opts];
+              } catch {
+                // ignore
+              }
+            } else if (cfg.fetchById) {
+              try {
+                const fetched: Record<string, unknown>[] = [];
+                for (const id of missing) {
+                  const single = await cfg.fetchById(String(id));
+                  if (single) fetched.push(single as unknown as Record<string, unknown>);
+                }
+                if (fetched.length > 0) opts = [...fetched, ...opts];
+              } catch {
+                // ignore
+              }
+            } else {
+              // Last resort: try to fetch each missing id via search
+              try {
+                for (const id of missing) {
+                  const bySearch = await cfg.fetchOptions(String(id));
+                  if (Array.isArray(bySearch) && bySearch.length > 0) {
+                    opts = [...(bySearch as unknown as Record<string, unknown>[]), ...opts];
+                  }
+                }
+              } catch {
+                // ignore
+              }
+            }
+          }
+
+          setMultiRelationOptions(opts);
           if (!multiRelationLoadedRef.current) multiRelationLoadedRef.current = true;
         } catch (err) {
           setMultiRelationError(err instanceof Error ? err.message : 'Failed to load options');
@@ -1039,7 +1168,72 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
       };
       loadMultiRelationOptions();
     }
-  }, [field, multiRelationOpen, debouncedMultiRelationSearch]);
+  }, [field, multiRelationOpen, debouncedMultiRelationSearch, localSelectedIds]);
+
+  // Sync localSelectedIds when incoming value changes
+  useEffect(() => {
+    const normalize = (val: unknown): string[] => {
+      if (Array.isArray(val)) return val.map(v => String(v));
+      if (typeof val === 'string') return val.includes(',') ? val.split(',').map(s => s.trim()).filter(Boolean) : (val ? [val] : []);
+      if (val === null || val === undefined) return [];
+      return [String(val)];
+    };
+    setLocalSelectedIds(normalize(value));
+  }, [value]);
+
+  // Load initial options for multirelation when value contains selected ids but options not yet loaded
+  useEffect(() => {
+    if (field.type === 'multirelation' && field.relationConfig && localSelectedIds.length > 0 && !multiRelationLoadedRef.current) {
+      const loadSelectedMultiOptions = async () => {
+        setMultiRelationLoading(true);
+        setMultiRelationError(null);
+        try {
+          const cfg = field.relationConfig as NonNullable<typeof field.relationConfig>;
+          let opts: Record<string, unknown>[] = [];
+
+          if (cfg.fetchByIds) {
+            const fetched = await cfg.fetchByIds(localSelectedIds);
+            opts = fetched as unknown as Record<string, unknown>[];
+          } else if (cfg.fetchById) {
+            const fetched: Record<string, unknown>[] = [];
+            for (const id of localSelectedIds) {
+              const single = await cfg.fetchById(String(id));
+              if (single) fetched.push(single as unknown as Record<string, unknown>);
+            }
+            opts = fetched;
+          } else {
+            // Best-effort: call fetchOptions with empty search and also attempt searching by ids
+            const base = await cfg.fetchOptions('');
+            opts = base as unknown as Record<string, unknown>[];
+            for (const id of localSelectedIds) {
+              try {
+                const bySearch = await cfg.fetchOptions(String(id));
+                if (Array.isArray(bySearch) && bySearch.length > 0) {
+                  // Only add items that aren't already in opts to avoid duplicates
+                  const newItems = (bySearch as unknown as Record<string, unknown>[]).filter(
+                    item => !opts.some(existing => String(existing[cfg.valueField]) === String(item[cfg.valueField]))
+                  );
+                  if (newItems.length > 0) {
+                    opts = [...newItems, ...opts];
+                  }
+                }
+              } catch {
+                // ignore
+              }
+            }
+          }
+
+          setMultiRelationOptions(opts);
+          multiRelationLoadedRef.current = true;
+        } catch (err) {
+          setMultiRelationError(err instanceof Error ? err.message : 'Failed to load options');
+        } finally {
+          setMultiRelationLoading(false);
+        }
+      };
+      loadSelectedMultiOptions();
+    }
+  }, [field, field.relationConfig, localSelectedIds]);
 
   // Show errors immediately if validateOnChange is true, otherwise wait for touch
   const showError = validateOnChange ? !!error : (touched && !!error);
@@ -1298,10 +1492,11 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
                       {relationOptions.map((entity) => {
                         const entityValue = String(entity[relationConfig.valueField]);
                         const entityLabel = String(entity[relationConfig.displayField]);
+                        const isSelected = String(value) === entityValue;                        
                         return (
                           <CommandItem
-                            key={entityValue}
-                            value={entityValue}
+                            key={entityLabel}
+                            value={entityLabel}
                             onSelect={() => {
                               onChange(entity[relationConfig.valueField]);
                               setRelationOpen(false);
@@ -1309,8 +1504,7 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
                             }}
                           >
                             <Check
-                              className={`mr-2 h-4 w-4 ${String(value) === entityValue ? "opacity-100" : "opacity-0"
-                                }`}
+                              className={`mr-2 h-4 w-4 ${isSelected ? "opacity-100" : "opacity-0"}`}
                             />
                             {entityLabel}
                           </CommandItem>
@@ -1333,59 +1527,88 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
 
         const relationConfig = field.relationConfig;
 
-        // Ensure value is an array
-        const selectedValues = Array.isArray(value) ? value : (value ? [value] : []);
+        // Normalize incoming value to array of string ids (localSelectedIds) is used for immediate UI updates
+        const selectedIds = localSelectedIds;
 
-        // Find selected entities
+        // Find selected entities from loaded options (will show detailed chips for any that are already loaded)
         const selectedEntities = multiRelationOptions.filter((entity) =>
-          selectedValues.includes(entity[relationConfig.valueField])
+          selectedIds.includes(String(entity[relationConfig.valueField]))
         );
 
-        // Handle selection toggle
+        // Helper to emit change to parent (as string[])
+        const emitChange = (ids: string[]) => {
+          onChange(ids);
+        };
+
+        // Handle selection toggle (optimistic update)
         const toggleSelection = (entityValue: unknown) => {
-          const newValues = selectedValues.includes(entityValue)
-            ? selectedValues.filter((v) => v !== entityValue)
-            : [...selectedValues, entityValue];
+          const valStr = String(entityValue);
+          const exists = selectedIds.includes(valStr);
+          const newIds = exists ? selectedIds.filter((v) => v !== valStr) : [...selectedIds, valStr];
 
           // Check max selections
-          if (relationConfig.maxSelections && newValues.length > relationConfig.maxSelections) {
+          if (relationConfig.maxSelections && newIds.length > relationConfig.maxSelections) {
             return;
           }
 
-          onChange(newValues);
+          // Update local state immediately for instant UI feedback
+          setLocalSelectedIds(newIds);
+          emitChange(newIds);
         };
 
-        // Handle remove
+        // Handle remove (optimistic)
         const removeSelection = (entityValue: unknown) => {
-          onChange(selectedValues.filter((v) => v !== entityValue));
+          const valStr = String(entityValue);
+          const newIds = selectedIds.filter((v) => v !== valStr);
+          setLocalSelectedIds(newIds);
+          emitChange(newIds);
         };
 
         return (
           <div className="space-y-2">
-            {/* Selected items as chips */}
-            {selectedEntities.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {selectedEntities.map((entity) => {
-                  const entityValue = entity[relationConfig.valueField];
-                  const entityLabel = String(entity[relationConfig.displayField]);
-                  return (
-                    <span
-                      key={String(entityValue)}
-                      className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-primary/10 text-primary rounded-md"
-                    >
-                      {entityLabel}
-                      <button
-                        type="button"
-                        onClick={() => removeSelection(entityValue)}
-                        disabled={disabled}
-                        className="hover:text-destructive disabled:opacity-50"
+            {/* Selected items as chips or compact summary when many selected */}
+            {localSelectedIds.length > 0 && (
+              localSelectedIds.length > 10 ? (
+                <div className="flex items-center gap-3">
+                  <div className="text-sm text-muted-foreground">{localSelectedIds.length} {field.label}</div>
+                  <Button variant="ghost" size="sm" onClick={async () => {
+                    setViewModalOpen(true);
+                    setModalLoading(true);
+                    try {
+                      const cfg = relationConfig as NonNullable<typeof relationConfig>;
+                      const items = await cfg.fetchOptions('');
+                      setModalItems(items as Record<string, unknown>[]);
+                    } catch {
+                      setModalItems([]);
+                    } finally {
+                      setModalLoading(false);
+                    }
+                  }}>View</Button>
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedEntities.map((entity) => {
+                    const entityValue = entity[relationConfig.valueField];
+                    const entityLabel = String(entity[relationConfig.displayField]);
+                    return (
+                      <span
+                        key={String(entityValue)}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-xs bg-primary/10 text-primary rounded-md"
                       >
-                        ×
-                      </button>
-                    </span>
-                  );
-                })}
-              </div>
+                        {entityLabel}
+                        <button
+                          type="button"
+                          onClick={() => removeSelection(entityValue)}
+                          disabled={disabled}
+                          className="hover:text-destructive disabled:opacity-50"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              )
             )}
 
             {/* Combobox for adding more */}
@@ -1395,7 +1618,7 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
                   variant="outline"
                   role="combobox"
                   className={`${inputClasses} ${errorClasses} justify-between`}
-                  disabled={disabled || (relationConfig.maxSelections ? selectedValues.length >= relationConfig.maxSelections : false)}
+                  disabled={disabled || (relationConfig.maxSelections ? localSelectedIds.length >= relationConfig.maxSelections : false)}
                 >
                   {field.placeholder || "Select..."}
                   <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -1424,19 +1647,19 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
                     )}
                     {!multiRelationLoading && !multiRelationError && multiRelationOptions.length > 0 && (
                       <CommandGroup>
-                        {multiRelationOptions.map((entity) => {
-                          const entityValue = entity[relationConfig.valueField];
-                          const entityLabel = String(entity[relationConfig.displayField]);
-                          const isSelected = selectedValues.includes(entityValue);
+                                {multiRelationOptions
+                                  .filter((entity) => !localSelectedIds.includes(String(entity[relationConfig.valueField])))
+                                  .map((entity) => {
+                                  const entityValue = entity[relationConfig.valueField];
+                                  const entityLabel = String(entity[relationConfig.displayField]);
                           return (
                             <CommandItem
-                              key={String(entityValue)}
-                              value={String(entityValue)}
+                              key={String(entityLabel)}
+                              value={String(entityLabel)}
                               onSelect={() => toggleSelection(entityValue)}
                             >
                               <Check
-                                className={`mr-2 h-4 w-4 ${isSelected ? "opacity-100" : "opacity-0"
-                                  }`}
+                                className="mr-2 h-4 w-4 opacity-0"
                               />
                               {entityLabel}
                             </CommandItem>
@@ -1449,15 +1672,61 @@ const DefaultFieldRenderer = React.memo(<T extends BaseEntity>({
               </PopoverContent>
             </Popover>
 
-            {/* Max selections hint */}
-            {relationConfig.maxSelections && (
-              <p className="text-xs text-muted-foreground">
-                {selectedValues.length} / {relationConfig.maxSelections} selected
-              </p>
-            )}
+              {/* Max selections hint */}
+              {relationConfig.maxSelections && (
+                <p className="text-xs text-muted-foreground">
+                  {localSelectedIds.length} / {relationConfig.maxSelections} selected
+                </p>
+              )}
+
+              {/* Modal to view selected items or browse related entities */}
+              {viewModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-start justify-center p-6">
+                  <div className="fixed inset-0 bg-black/40" onClick={() => setViewModalOpen(false)} />
+                  <div className="relative bg-background rounded-md shadow-lg max-w-3xl w-full max-h-[80vh] overflow-auto p-4 z-10">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-lg font-medium">{field.label}</h3>
+                      <div>
+                        <Button variant="ghost" size="sm" onClick={() => setViewModalOpen(false)}>Close</Button>
+                      </div>
+                    </div>
+                    {modalLoading ? (
+                      <div className="py-6 text-center text-sm text-muted-foreground">Loading...</div>
+                    ) : (
+                      <div className="space-y-2">
+                        {modalItems.length === 0 && (
+                          <div className="text-sm text-muted-foreground">No items available</div>
+                        )}
+                        {modalItems.map((it) => (
+                          <div key={String(it[relationConfig.valueField])} className="py-2 border-b last:border-b-0">
+                            <div className="text-sm">{String(it[relationConfig.displayField])}</div>
+                            <div className="text-xs text-muted-foreground">ID: {String(it[relationConfig.valueField])}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
           </div>
         );
       }
+
+      case 'custom':
+        if (!field.customComponent) {
+          return <div className="text-destructive text-sm">Custom component is required for custom field type</div>;
+        }
+        const CustomComponent = field.customComponent;
+        return (
+          <CustomComponent
+            value={value}
+            onChange={onChange}
+            disabled={disabled}
+            error={touched && error ? error : undefined}
+            placeholder={field.placeholder}
+            helpText={field.helpText}
+          />
+        );
 
       default:
         return (

@@ -19,6 +19,9 @@ export interface EntityState<T extends BaseEntity = BaseEntity> {
   /** Selected IDs */
   selectedIds: Set<string | number>;
   
+  /** Primary key field name */
+  primaryKeyField: string;
+  
   /** Current page */
   page: number;
   
@@ -121,6 +124,9 @@ export interface EntityStateProviderProps<T extends BaseEntity = BaseEntity> {
   
   /** Initial filters */
   initialFilters?: FilterConfig[];
+  
+  /** Primary key field name (defaults to 'id') */
+  primaryKeyField?: string;
   
   /** Children */
   children: React.ReactNode;

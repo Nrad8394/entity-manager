@@ -7,7 +7,8 @@
 
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { BaseEntity } from '../../primitives/types';
 import {
   EntityActionsProps,
@@ -22,6 +23,7 @@ import {
   BulkAction,
   DownloadAction,
   CustomAction,
+  ActionContext,
 } from './types';
 import {
   filterActionsByPosition,
@@ -72,15 +74,28 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
   onActionComplete,
   onActionError,
 }: EntityActionsProps<T>): React.ReactElement {
+  const overflowButtonRef = useRef<HTMLButtonElement>(null);
   const [state, setState] = useState<ActionState>({
     loading: false,
     modalOpen: false,
     dropdownOpen: false,
     overflowOpen: false,
   });
+  const [menuPosition, setMenuPosition] = useState<{ top: number; right: number } | null>(null);
+
+  // Update menu position when overflow menu opens
+  useEffect(() => {
+    if (state.overflowOpen && overflowButtonRef.current) {
+      const rect = overflowButtonRef.current.getBoundingClientRect();
+      setMenuPosition({
+        top: rect.bottom + 8, // 8px gap from button
+        right: window.innerWidth - rect.right,
+      });
+    }
+  }, [state.overflowOpen]);
 
   // Helper to coerce an action label/confirmText (which may be a function or ReactNode)
-  const getActionLabelString = (maybeLabel: any, fallback: any) => {
+  const getActionLabelString = useCallback((maybeLabel: string | React.ReactNode | ((entity?: T) => React.ReactNode) | undefined, fallback: string | React.ReactNode | ((entity?: T) => React.ReactNode) | undefined) => {
     // If explicit string provided
     if (typeof maybeLabel === 'string') return maybeLabel;
     // If it's a function, call it
@@ -103,9 +118,9 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
       }
     }
     return String(fallback ?? '');
-  };
+  }, [entity]);
 
-  const renderActionLabel = (maybeLabel: any) => {
+  const renderActionLabel = (maybeLabel: React.ReactNode | ((entity?: T) => React.ReactNode) | undefined) => {
     if (typeof maybeLabel === 'function') {
       try {
         return maybeLabel(entity);
@@ -117,11 +132,11 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
   };
 
   // Render icon which may be a React node or a component type
-  const renderIcon = (icon: any) => {
+  const renderIcon = (icon: React.ReactNode | React.ComponentType<Record<string, unknown>> | undefined) => {
     if (!icon) return null;
     // If it's a component type (function/class), instantiate it
     if (typeof icon === 'function') {
-      const IconComp = icon as React.ComponentType<any>;
+      const IconComp = icon as React.ComponentType<Record<string, unknown>>;
       try {
         return <IconComp />;
       } catch {
@@ -169,7 +184,7 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
         />
       ),
     }));
-  }, [entity, context]);
+  }, [entity, context, getActionLabelString]);
 
   /**
    * Handle form action
@@ -232,7 +247,7 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
     }
     if (!action.url) return; // nothing to navigate to
 
-    const url = buildNavigationUrl(action.url as any, entity, context);
+    const url = buildNavigationUrl(action.url as string, entity, context);
 
     if (!url) return;
 
@@ -259,7 +274,7 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
 
     // Confirm bulk operation
     if (action.confirmBulk) {
-      const message = getBulkConfirmMessage(action.confirmMessage as any, entities);
+      const message = getBulkConfirmMessage(action.confirmMessage, entities);
       const confirmed = window.confirm(message);
       if (!confirmed) return;
     }
@@ -365,7 +380,7 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
 
   // Determine max visible actions based on mode and context
   const getMaxVisibleActions = () => {
-    if (position === 'row') return 1; // In table rows, show only 1 actions + more
+    if (position === 'row') return 2; // In table rows, show 2 actions + more (show Edit/Delete)
     if (position === 'toolbar') return 3; // In toolbar, show 3 actions + more
     return 2; // Default: show 2 actions + more
   };
@@ -377,15 +392,29 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
 
   // Get button variant classes
   const getButtonClasses = (variant?: string, isExecuting?: boolean) => {
-    const baseClasses = 'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed';
+    // Row position buttons should be icon-only with different sizing
+    const isRowButton = position === 'row';
     
-    const variantClasses = {
+    const baseClasses = isRowButton 
+      ? 'inline-flex items-center justify-center w-9 h-9 rounded-lg transition-all focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-md'
+      : 'inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 disabled:opacity-50 disabled:cursor-not-allowed';
+    
+    const variantClasses = isRowButton ? {
+      primary: 'bg-blue-500 text-white hover:bg-blue-600',
+      secondary: 'bg-gray-400 text-white hover:bg-gray-500',
+      destructive: 'bg-red-500 text-white hover:bg-red-600',
+      outline: 'border-2 border-gray-300 bg-white text-gray-700 hover:bg-gray-50',
+      ghost: 'text-gray-600 bg-transparent hover:bg-gray-100',
+      link: 'text-blue-500 hover:text-blue-600',
+      default: 'bg-blue-500 text-white hover:bg-blue-600',
+    } : {
       primary: 'bg-primary text-primary-foreground hover:bg-primary/90',
       secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
       destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90',
       outline: 'border border-input bg-background hover:bg-muted hover:text-foreground',
       ghost: 'hover:bg-muted hover:text-foreground',
       link: 'text-primary underline-offset-4 hover:underline',
+      default: 'bg-primary text-primary-foreground hover:bg-primary/90',
     };
 
     const selectedVariant = variantClasses[variant as keyof typeof variantClasses] || variantClasses.ghost;
@@ -409,10 +438,10 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
         {state.dropdownOpen && (
           <>
             <div 
-              className="fixed inset-0 z-10" 
+              className="fixed inset-0 z-50" 
               onClick={() => setState(prev => ({ ...prev, dropdownOpen: false }))}
             />
-            <div className="absolute right-0 z-20 mt-2 w-56 origin-top-right rounded-md bg-card border shadow-lg">
+            <div className="absolute right-0 z-40 mt-2 w-56 origin-top-right rounded-md bg-card border shadow-lg">
               <div className="py-1">
                 {enabledActions.map(action => (
                   <button
@@ -423,11 +452,19 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
                     }}
                     disabled={state.loading && state.executing === action.id}
                     title={getActionTooltip(action, entity, context)}
-                    className={`w-full flex items-center gap-2 px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                      action.variant === 'destructive' ? 'text-destructive hover:bg-destructive/10' : ''
+                    className={`w-full flex items-center gap-2 px-4 py-2 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                      action.variant === 'destructive'
+                        ? 'text-destructive hover:bg-destructive hover:text-destructive-foreground'
+                        : action.variant === 'secondary'
+                        ? 'text-secondary-foreground hover:bg-secondary hover:text-secondary-foreground'
+                        : action.variant === 'primary'
+                        ? 'text-primary hover:bg-primary hover:text-primary-foreground'
+                        : action.variant === 'outline'
+                        ? 'text-foreground border-l border-input hover:bg-muted'
+                        : 'text-foreground hover:bg-muted'
                     }`}
                   >
-                    {action.icon && <span className="flex-shrink-0">{renderIcon(action.icon)}</span>}
+                    {action.icon && <span className="flex-shrink-0 ">{renderIcon(action.icon)}</span>}
                     <span className="flex-1 text-left">{renderActionLabel(action.label)}</span>
                     {state.loading && state.executing === action.id && (
                       <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -448,11 +485,11 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
 
   // Default: buttons mode with overflow menu
   return (
-    <div className={`inline-flex items-center gap-1 ${className}`}>
+    <div className={`inline-flex items-center gap-1  ${className}`}>
       {/* Visible actions */}
       {visibleActions.map(action => {
         if (action.actionType === 'custom' && (action as CustomAction<T>).component) {
-          const Comp = (action as CustomAction<T>).component as React.ComponentType<{ entity?: T; context?: any }>;
+          const Comp = (action as CustomAction<T>).component as React.ComponentType<{ entity?: T; context?: ActionContext<T> }>;
           return <Comp key={action.id} entity={entity} context={context} />;
         }
 
@@ -462,12 +499,13 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
             onClick={() => executeAction(action)}
             disabled={state.loading && state.executing === action.id}
             title={getActionTooltip(action, entity, context)}
+            aria-label={getActionLabelString(action.label, action.id)}
             className={getButtonClasses(action.variant, state.loading && state.executing === action.id)}
           >
-            {action.icon && <span className="flex-shrink-0">{renderIcon(action.icon)}</span>}
+            {action.icon && <span className={`flex-shrink-0 ${position === 'row' ? 'flex items-center justify-center' : ''}`}>{renderIcon(action.icon)}</span>}
             {position !== 'row' && <span>{renderActionLabel(action.label)}</span>}
             {state.loading && state.executing === action.id && (
-              <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
@@ -478,9 +516,10 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
 
       {/* Overflow menu (three dots) */}
       {hasOverflow && (
-        <div className="relative">
+        <div className={`inline-block`}>
           <button
-            className="inline-flex items-center justify-center w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-ring"
+            ref={overflowButtonRef}
+            className={`inline-flex items-center justify-center ${position === 'row' ? 'w-9 h-9 rounded-lg bg-gray-300 text-gray-700 hover:bg-gray-400 hover:shadow-md' : 'w-8 h-8 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md'} transition-colors focus:outline-none focus:ring-2 focus:ring-ring`}
             onClick={() => setState(prev => ({ ...prev, overflowOpen: !prev.overflowOpen }))}
             title="More actions"
           >
@@ -489,14 +528,25 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
             </svg>
           </button>
 
-          {state.overflowOpen && (
+          {state.overflowOpen && menuPosition && createPortal(
             <>
               <div 
-                className="fixed inset-0 z-10" 
+                className={`fixed inset-0 bg-black/60`}
+                style={{ zIndex: 2147483646 }}
                 onClick={() => setState(prev => ({ ...prev, overflowOpen: false }))}
               />
-              <div className="absolute right-0 z-20 mt-1 w-48 origin-top-right rounded-md bg-card border shadow-lg">
-                <div className="py-1">
+              <div 
+                className={`fixed rounded-lg bg-white/95 backdrop-blur-sm border-2 border-gray-300 shadow-2xl min-w-56`}
+                style={{ 
+                  zIndex: 2147483647,
+                  top: `${menuPosition.top}px`,
+                  right: `${menuPosition.right}px`,
+                  maxHeight: 'calc(100vh - 100px)',
+                  overflowY: 'auto',
+                  pointerEvents: 'auto',
+                }}
+              >
+                <div className="py-2">
                   {overflowActions.map(action => (
                     <button
                       key={action.id}
@@ -506,14 +556,22 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
                       }}
                       disabled={state.loading && state.executing === action.id}
                       title={getActionTooltip(action, entity, context)}
-                      className={`w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                        action.variant === 'destructive' ? 'text-destructive hover:bg-destructive/10' : ''
+                      className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                        action.variant === 'destructive'
+                          ? 'text-red-600 hover:bg-red-50'
+                          : action.variant === 'secondary'
+                          ? 'text-gray-700 hover:bg-gray-100'
+                          : action.variant === 'primary'
+                          ? 'text-blue-600 hover:bg-blue-50'
+                          : action.variant === 'outline'
+                          ? 'text-gray-600 hover:bg-gray-50'
+                          : 'text-gray-700 hover:bg-gray-50'
                       }`}
                     >
-                      {action.icon && <span className="flex-shrink-0">{renderIcon(action.icon)}</span>}
+                      {action.icon && <span className="flex-shrink-0 w-5 h-5 flex items-center justify-center">{renderIcon(action.icon)}</span>}
                       <span className="flex-1 text-left">{renderActionLabel(action.label)}</span>
                       {state.loading && state.executing === action.id && (
-                        <svg className="animate-spin h-3 w-3" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <svg className="animate-spin h-4 w-4 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                         </svg>
@@ -522,7 +580,8 @@ export function EntityActions<T extends BaseEntity = BaseEntity>({
                   ))}
                 </div>
               </div>
-            </>
+            </>,
+            document.body
           )}
         </div>
       )}
@@ -563,10 +622,10 @@ function ConfirmDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-card rounded-lg border shadow-lg max-w-md w-full mx-4 p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-        <p className="text-sm text-muted-foreground">{message}</p>
-        <div className="flex items-center justify-end gap-3 pt-2">
+      <div className="bg-card rounded-lg border shadow-lg max-w-lg w-full mx-4 p-6 space-y-4 text-center">
+        <h2 className="text-lg font-semibold text-foreground text-center">{title}</h2>
+        <p className="text-sm text-muted-foreground break-words whitespace-normal text-center">{message}</p>
+        <div className="flex items-center justify-center gap-3 pt-2">
           <button 
             onClick={onCancel} 
             disabled={confirming}

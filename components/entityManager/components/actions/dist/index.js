@@ -410,7 +410,7 @@ function EntityActions(_a) {
     // Determine max visible actions based on mode and context
     var getMaxVisibleActions = function () {
         if (position === 'row')
-            return 1; // In table rows, show only 1 actions + more
+            return 2; // In table rows, show 2 actions + more (show Edit/Delete)
         if (position === 'toolbar')
             return 3; // In toolbar, show 3 actions + more
         return 2; // Default: show 2 actions + more
@@ -446,7 +446,7 @@ function EntityActions(_a) {
                     react_1["default"].createElement("div", { className: "py-1" }, enabledActions.map(function (action) { return (react_1["default"].createElement("button", { key: action.id, onClick: function () {
                             executeAction(action);
                             setState(function (prev) { return (__assign(__assign({}, prev), { dropdownOpen: false })); });
-                        }, disabled: state.loading && state.executing === action.id, title: utils_1.getActionTooltip(action, entity, context), className: "w-full flex items-center gap-2 px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed " + (action.variant === 'destructive' ? 'text-destructive hover:bg-destructive/10' : '') },
+                        }, disabled: state.loading && state.executing === action.id, title: utils_1.getActionTooltip(action, entity, context), className: "w-full flex items-center gap-2 px-4 py-2 text-sm text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed " + (action.variant === 'destructive' ? 'hover:bg-destructive hover:text-destructive-foreground' : '') },
                         action.icon && react_1["default"].createElement("span", { className: "flex-shrink-0" }, renderIcon(action.icon)),
                         react_1["default"].createElement("span", { className: "flex-1 text-left" }, renderActionLabel(action.label)),
                         state.loading && state.executing === action.id && (react_1["default"].createElement("svg", { className: "animate-spin h-4 w-4", xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24" },
@@ -461,7 +461,7 @@ function EntityActions(_a) {
                 var Comp = action.component;
                 return react_1["default"].createElement(Comp, { key: action.id, entity: entity, context: context });
             }
-            return (react_1["default"].createElement("button", { key: action.id, onClick: function () { return executeAction(action); }, disabled: state.loading && state.executing === action.id, title: utils_1.getActionTooltip(action, entity, context), className: getButtonClasses(action.variant, state.loading && state.executing === action.id) },
+            return (react_1["default"].createElement("button", { key: action.id, onClick: function () { return executeAction(action); }, disabled: state.loading && state.executing === action.id, title: utils_1.getActionTooltip(action, entity, context), "aria-label": getActionLabelString(action.label, action.id), className: getButtonClasses(action.variant, state.loading && state.executing === action.id) },
                 action.icon && react_1["default"].createElement("span", { className: "flex-shrink-0" }, renderIcon(action.icon)),
                 position !== 'row' && react_1["default"].createElement("span", null, renderActionLabel(action.label)),
                 state.loading && state.executing === action.id && (react_1["default"].createElement("svg", { className: "animate-spin h-3 w-3", xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24" },
@@ -478,7 +478,7 @@ function EntityActions(_a) {
                     react_1["default"].createElement("div", { className: "py-1" }, overflowActions.map(function (action) { return (react_1["default"].createElement("button", { key: action.id, onClick: function () {
                             executeAction(action);
                             setState(function (prev) { return (__assign(__assign({}, prev), { overflowOpen: false })); });
-                        }, disabled: state.loading && state.executing === action.id, title: utils_1.getActionTooltip(action, entity, context), className: "w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed " + (action.variant === 'destructive' ? 'text-destructive hover:bg-destructive/10' : '') },
+                        }, disabled: state.loading && state.executing === action.id, title: utils_1.getActionTooltip(action, entity, context), className: "w-full flex items-center gap-2 px-3 py-2 text-xs text-foreground hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed " + (action.variant === 'destructive' ? 'hover:bg-destructive hover:text-destructive-foreground' : '') },
                         action.icon && react_1["default"].createElement("span", { className: "flex-shrink-0" }, renderIcon(action.icon)),
                         react_1["default"].createElement("span", { className: "flex-1 text-left" }, renderActionLabel(action.label)),
                         state.loading && state.executing === action.id && (react_1["default"].createElement("svg", { className: "animate-spin h-3 w-3", xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24" },
@@ -512,10 +512,10 @@ function ConfirmDialog(_a) {
         });
     }); };
     return (react_1["default"].createElement("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" },
-        react_1["default"].createElement("div", { className: "bg-card rounded-lg border shadow-lg max-w-md w-full mx-4 p-6 space-y-4" },
-            react_1["default"].createElement("h2", { className: "text-lg font-semibold text-foreground" }, title),
-            react_1["default"].createElement("p", { className: "text-sm text-muted-foreground" }, message),
-            react_1["default"].createElement("div", { className: "flex items-center justify-end gap-3 pt-2" },
+        react_1["default"].createElement("div", { className: "bg-card rounded-lg border shadow-lg max-w-lg w-full mx-4 p-6 space-y-4 text-center" },
+            react_1["default"].createElement("h2", { className: "text-lg font-semibold text-foreground text-center" }, title),
+            react_1["default"].createElement("p", { className: "text-sm text-muted-foreground break-words whitespace-normal text-center" }, message),
+            react_1["default"].createElement("div", { className: "flex items-center justify-center gap-3 pt-2" },
                 react_1["default"].createElement("button", { onClick: onCancel, disabled: confirming, className: "px-4 py-2 text-sm font-medium border border-input rounded-md hover:bg-muted transition-colors disabled:opacity-50" }, cancelText),
                 react_1["default"].createElement("button", { onClick: handleConfirm, disabled: confirming, className: "px-4 py-2 text-sm font-medium bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 inline-flex items-center gap-2" },
                     confirming && (react_1["default"].createElement("svg", { className: "animate-spin h-4 w-4", xmlns: "http://www.w3.org/2000/svg", fill: "none", viewBox: "0 0 24 24" },

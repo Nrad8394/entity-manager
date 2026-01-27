@@ -217,27 +217,31 @@ export function FileUpload({
   return (
     <div className={cn('space-y-2', className)}>
       {/* Current file display */}
-      {currentFile && (
+      {(currentFile || currentFileUrl) && (
         <div className="relative border rounded-lg overflow-hidden bg-card">
-          {showPreview && previewUrl && currentFile.type.startsWith('image/') ? (
+          {showPreview && previewUrl ? (
             <div className="relative">
               <img 
                 src={previewUrl} 
-                alt={currentFile.name}
+                alt={currentFile?.name || 'Preview'}
                 className="w-full h-48 object-cover"
               />
               <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
               <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
-                <p className="text-sm font-medium truncate">{currentFile.name}</p>
-                <p className="text-xs opacity-90">{formatFileSize(currentFile.size)}</p>
+                <p className="text-sm font-medium truncate">{currentFile?.name || 'Existing image'}</p>
+                {currentFile && (
+                  <p className="text-xs opacity-90">{formatFileSize(currentFile.size)}</p>
+                )}
               </div>
             </div>
           ) : (
             <div className="p-4 flex items-center gap-3">
-              {getFileIcon(currentFile)}
+              {currentFile ? getFileIcon(currentFile) : <ImageIcon className="h-8 w-8 text-blue-500" />}
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{currentFile.name}</p>
-                <p className="text-xs text-muted-foreground">{formatFileSize(currentFile.size)}</p>
+                <p className="text-sm font-medium truncate">{currentFile?.name || 'Image'}</p>
+                {currentFile && (
+                  <p className="text-xs text-muted-foreground">{formatFileSize(currentFile.size)}</p>
+                )}
               </div>
               {uploadProgress === 100 && (
                 <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0" />
@@ -270,7 +274,7 @@ export function FileUpload({
       )}
 
       {/* Upload area */}
-      {!currentFile && (
+      {!currentFile && !currentFileUrl && (
         <div
           onClick={handleClick}
           onDragEnter={handleDrag}
@@ -325,13 +329,6 @@ export function FileUpload({
             </p>
           )}
         </div>
-      )}
-
-      {/* Error message */}
-      {error && (
-        <p id="file-error" className="text-xs text-destructive">
-          {error}
-        </p>
       )}
     </div>
   );

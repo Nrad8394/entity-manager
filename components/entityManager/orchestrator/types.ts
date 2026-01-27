@@ -7,6 +7,7 @@
 import { BaseEntity } from '../primitives/types';
 import { EntityConfig } from '../composition/config/types';
 import { ApiClient } from '../composition/api/types';
+import { FilterConfig } from '../primitives/types/entity';
 
 /**
  * Entity manager configuration
@@ -26,6 +27,9 @@ export interface EntityManagerConfig<T extends BaseEntity = BaseEntity> {
   
   /** Initial data (optional) */
   initialData?: T[];
+  
+  /** Initial filters (optional) */
+  initialFilters?: FilterConfig[];
   
   /** Callback when view changes */
   onViewChange?: (view: EntityManagerView) => void;

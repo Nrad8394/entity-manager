@@ -73,6 +73,18 @@ function canExecuteAction(action, entity, context) {
     if (!action.allowMultiple && (context === null || context === void 0 ? void 0 : context.selectedEntities) && context.selectedEntities.length > 1) {
         return false;
     }
+    // Check action-level required permissions (if defined)
+    var ctxPerms = (context === null || context === void 0 ? void 0 : context.permissions) || [];
+    if (action.permission) {
+        if (!ctxPerms.includes(action.permission))
+            return false;
+    }
+    if (action.permissions && action.permissions.length > 0) {
+        // Require at least one matching permission from the action's list
+        var allowed = action.permissions.some(function (p) { return ctxPerms.includes(p); });
+        if (!allowed)
+            return false;
+    }
     return true;
 }
 exports.canExecuteAction = canExecuteAction;
@@ -128,6 +140,19 @@ function getActionTooltip(action, entity, context) {
         }
         if (!action.allowMultiple && (context === null || context === void 0 ? void 0 : context.selectedEntities) && context.selectedEntities.length > 1) {
             return 'This action can only be performed on one item';
+        }
+    }
+    // Fall back to showing the label as tooltip
+    var label = action.label;
+    if (typeof label === 'string')
+        return label;
+    if (typeof label === 'function') {
+        try {
+            var result = label(entity);
+            return typeof result === 'string' ? result : String(result || '');
+        }
+        catch (_b) {
+            return undefined;
         }
     }
     return undefined;

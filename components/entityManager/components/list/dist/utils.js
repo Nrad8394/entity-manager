@@ -13,6 +13,7 @@ var __spreadArrays = (this && this.__spreadArrays) || function () {
 };
 exports.__esModule = true;
 exports.getDefaultPageSizes = exports.isGridView = exports.isImageView = exports.getEntityDate = exports.getEntityImageUrl = exports.getEntitySubtitle = exports.getEntityTitle = exports.getTotalPages = exports.paginateEntities = exports.sortEntities = exports.filterEntities = exports.searchEntities = exports.formatCellValue = exports.getColumnValue = exports.getVisibleColumns = void 0;
+var date_fns_1 = require("date-fns");
 /**
  * Get visible columns
  */
@@ -50,17 +51,50 @@ function formatCellValue(value, column, entity) {
         return column.formatter(value, entity);
     }
     // Type-based formatting
-    if (column.type === 'date') {
+    if (column.type === 'datetime') {
+        // Render full date + time in a consistent format using date-fns
         if (value instanceof Date) {
-            return value.toLocaleDateString();
+            return date_fns_1.format(value, 'Pp');
         }
         if (typeof value === 'string' && value) {
             try {
-                return new Date(value).toLocaleDateString();
+                var parsed = date_fns_1.parseISO(value);
+                if (!isNaN(parsed.getTime()))
+                    return date_fns_1.format(parsed, 'Pp');
             }
             catch (_a) {
-                return value;
+                // fallthrough
             }
+            var asNumber = Number(value);
+            if (!Number.isNaN(asNumber)) {
+                var parsed = new Date(asNumber);
+                if (!isNaN(parsed.getTime()))
+                    return date_fns_1.format(parsed, 'Pp');
+            }
+            return value;
+        }
+        if (typeof value === 'number') {
+            var parsed = new Date(value);
+            if (!isNaN(parsed.getTime()))
+                return date_fns_1.format(parsed, 'Pp');
+            return String(value);
+        }
+        return '';
+    }
+    if (column.type === 'date') {
+        if (value instanceof Date) {
+            return date_fns_1.format(value, 'P');
+        }
+        if (typeof value === 'string' && value) {
+            try {
+                var parsed = date_fns_1.parseISO(value);
+                if (!isNaN(parsed.getTime()))
+                    return date_fns_1.format(parsed, 'P');
+            }
+            catch (_b) {
+                // fallthrough
+            }
+            return value;
         }
         return '';
     }

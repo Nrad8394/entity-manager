@@ -22,12 +22,15 @@ function createInitialState<T extends BaseEntity>(
   props: EntityStateProviderProps<T>
 ): EntityState<T> {
   const entities = props.initialEntities || [];
-  const entitiesById = new Map(entities.map(e => [e.id, e]));
+  const primaryKeyField = props.primaryKeyField || 'id';
+  const entitiesById = new Map(entities.map(e => [e[primaryKeyField], e]));
+  
   
   return {
     entities,
     entitiesById,
     selectedIds: new Set(),
+    primaryKeyField,
     page: props.initialPage || 1,
     pageSize: props.initialPageSize || 10,
     sort: props.initialSort,
@@ -48,28 +51,28 @@ function entityStateReducer<T extends BaseEntity>(
   switch (action.type) {
     case 'SET_ENTITIES': {
       const payload = action.payload || [];
-      const entitiesById = new Map(payload.map(e => [e.id, e]));
+      const entitiesById = new Map(payload.map(e => [e[state.primaryKeyField], e]));
       return { ...state, entities: payload, entitiesById };
     }
     
     case 'ADD_ENTITY': {
       const entities = [...state.entities, action.payload];
       const entitiesById = new Map(state.entitiesById);
-      entitiesById.set(action.payload.id, action.payload);
+      entitiesById.set(action.payload[state.primaryKeyField], action.payload);
       return { ...state, entities, entitiesById };
     }
     
     case 'UPDATE_ENTITY': {
       const entities = state.entities.map(e => 
-        e.id === action.payload.id ? action.payload : e
+        e[state.primaryKeyField] === action.payload[state.primaryKeyField] ? action.payload : e
       );
       const entitiesById = new Map(state.entitiesById);
-      entitiesById.set(action.payload.id, action.payload);
+      entitiesById.set(action.payload[state.primaryKeyField], action.payload);
       return { ...state, entities, entitiesById };
     }
     
     case 'DELETE_ENTITY': {
-      const entities = state.entities.filter(e => e.id !== action.payload);
+      const entities = state.entities.filter(e => e[state.primaryKeyField] !== action.payload);
       const entitiesById = new Map(state.entitiesById);
       entitiesById.delete(action.payload);
       const selectedIds = new Set(state.selectedIds);
@@ -93,7 +96,7 @@ function entityStateReducer<T extends BaseEntity>(
     }
     
     case 'SELECT_ALL': {
-      const selectedIds = new Set(state.entities.map(e => e.id));
+      const selectedIds = new Set(state.entities.map(e => e[state.primaryKeyField]));
       return { ...state, selectedIds };
     }
     
@@ -131,6 +134,7 @@ function entityStateReducer<T extends BaseEntity>(
     }
     
     case 'SET_SEARCH':
+      console.log('🔤 SET_SEARCH action:', { newSearch: action.payload, oldSearch: state.search });
       return { ...state, search: action.payload, page: 1 };
     
     case 'SET_LOADING':
@@ -204,6 +208,20 @@ export function EntityStateProvider<T extends BaseEntity = BaseEntity>(
     dispatch({ type: 'SET_SELECTED', payload: ids });
   }, []);
 
+
+  // NOTE: Some callers (older UI code) may call these setters synchronously
+  // while rendering another component which can cause the React warning
+  // "Cannot update a component while rendering a different component".
+  // To avoid that class of bug we defer dispatching the actions to the next
+  // microtask so updates never happen during another component's render
+  // phase. This keeps behaviour identical but avoids the warning and makes
+  // it safe for callers that inadvertently call setters during render.
+  const defer = <A extends any[]>(fn: (...args: A) => void) => {
+    return (...args: A) => {
+      Promise.resolve().then(() => fn(...args));
+    };
+  };
+
   const setPage = useCallback((page: number) => {
     dispatch({ type: 'SET_PAGE', payload: page });
   }, []);
@@ -212,21 +230,21 @@ export function EntityStateProvider<T extends BaseEntity = BaseEntity>(
     dispatch({ type: 'SET_PAGE_SIZE', payload: pageSize });
   }, []);
 
-  const setSort = useCallback((sort: any) => {
+  const setSort = useCallback(defer((sort: any) => {
     dispatch({ type: 'SET_SORT', payload: sort });
-  }, []);
+  }), []);
 
-  const setFilters = useCallback((filters: FilterConfig[]) => {
+  const setFilters = useCallback(defer((filters: FilterConfig[]) => {
     dispatch({ type: 'SET_FILTERS', payload: filters });
-  }, []);
+  }), []);
 
-  const addFilter = useCallback((filter: FilterConfig) => {
+  const addFilter = useCallback(defer((filter: FilterConfig) => {
     dispatch({ type: 'ADD_FILTER', payload: filter });
-  }, []);
+  }), []);
 
-  const removeFilter = useCallback((field: string) => {
+  const removeFilter = useCallback(defer((field: string) => {
     dispatch({ type: 'REMOVE_FILTER', payload: field });
-  }, []);
+  }), []);
 
   const setSearch = useCallback((search: string) => {
     dispatch({ type: 'SET_SEARCH', payload: search });

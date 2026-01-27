@@ -111,7 +111,7 @@ function formatFieldValue(value, type) {
         case 'url':
             return react_1["default"].createElement("a", { href: String(value), target: "_blank", rel: "noopener noreferrer" }, String(value));
         case 'image':
-            return (react_1["default"].createElement(image_1["default"], { src: String(value), alt: "Image", className: "field-image", width: 400, height: 300, style: { objectFit: 'contain' } }));
+            return (react_1["default"].createElement(image_1["default"], { src: String(value), alt: "Image", className: "field-image", width: 400, height: 300, style: { objectFit: 'contain', width: 'auto', height: 'auto' } }));
         case 'json':
             return react_1["default"].createElement("pre", { className: "json-value" }, JSON.stringify(value, null, 2));
             return react_1["default"].createElement("pre", { className: "json-value" }, JSON.stringify(value, null, 2));
@@ -157,9 +157,42 @@ function groupFields(fields, groups) {
     });
     // Add ungrouped fields
     grouped.set(null, []);
+    // Populate inline field definitions declared inside groups (some configs declare fields inline in group.fields)
+    groups.forEach(function (group) {
+        var target = grouped.get(group.id) || [];
+        group.fields.forEach(function (f) {
+            if (typeof f !== 'string') {
+                // inline field definition
+                var inlineField = f;
+                target.push(inlineField);
+            }
+        });
+        grouped.set(group.id, target);
+    });
     // Assign fields to groups
     fields.forEach(function (field) {
+        // Prefer explicit field.group
         var groupId = field.group || null;
+        // If no explicit group, attempt to find a group that lists this field key
+        if (!groupId && groups && groups.length > 0) {
+            for (var _i = 0, groups_1 = groups; _i < groups_1.length; _i++) {
+                var g = groups_1[_i];
+                if (!g || !g.fields)
+                    continue;
+                // g.fields may contain strings (field keys) or inline field defs
+                var contains = g.fields.some(function (f) {
+                    if (typeof f === 'string')
+                        return String(f) === String(field.key);
+                    // inline field object
+                    var inline = f;
+                    return (inline === null || inline === void 0 ? void 0 : inline.key) && String(inline.key) === String(field.key);
+                });
+                if (contains) {
+                    groupId = g.id;
+                    break;
+                }
+            }
+        }
         var groupFields = grouped.get(groupId) || [];
         groupFields.push(field);
         grouped.set(groupId, groupFields);

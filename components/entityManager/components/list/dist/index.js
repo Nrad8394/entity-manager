@@ -63,6 +63,7 @@ var __spreadArrays = (this && this.__spreadArrays) || function () {
 exports.__esModule = true;
 exports.EntityList = void 0;
 var react_1 = require("react");
+var date_fns_1 = require("date-fns");
 var image_1 = require("next/image");
 var actions_1 = require("../actions");
 var utils_1 = require("./utils");
@@ -84,35 +85,36 @@ var label_1 = require("@/components/ui/label");
  */
 function EntityList(props) {
     var _this = this;
-    var _a, _b;
-    var data = props.data, columns = props.columns, _c = props.view, viewProp = _c === void 0 ? 'table' : _c, _d = props.toolbar, toolbar = _d === void 0 ? {} : _d, _e = props.selectable, selectable = _e === void 0 ? false : _e, _f = props.multiSelect, multiSelect = _f === void 0 ? false : _f, selectedIdsProp = props.selectedIds, onSelectionChange = props.onSelectionChange, onRowClick = props.onRowClick, onRowDoubleClick = props.onRowDoubleClick, _g = props.pagination, pagination = _g === void 0 ? false : _g, paginationConfig = props.paginationConfig, onPaginationChange = props.onPaginationChange, _h = props.sortable, sortable = _h === void 0 ? false : _h, sortConfigProp = props.sortConfig, onSortChange = props.onSortChange, _j = props.filterable, filterable = _j === void 0 ? false : _j, filterConfigsProp = props.filterConfigs, onFilterChange = props.onFilterChange, _k = props.searchable, searchable = _k === void 0 ? false : _k, searchValueProp = props.searchValue, onSearchChange = props.onSearchChange, _l = props.searchPlaceholder, searchPlaceholder = _l === void 0 ? 'Search...' : _l, _m = props.loading, loading = _m === void 0 ? false : _m, error = props.error, actions = props.actions, _o = props.className, className = _o === void 0 ? '' : _o, rowClassName = props.rowClassName, _p = props.hover, hover = _p === void 0 ? true : _p, _q = props.striped, striped = _q === void 0 ? false : _q, titleField = props.titleField, subtitleField = props.subtitleField, imageField = props.imageField, dateField = props.dateField;
+    var _a, _b, _c;
+    var data = props.data, columns = props.columns, _d = props.view, viewProp = _d === void 0 ? 'table' : _d, _e = props.toolbar, toolbar = _e === void 0 ? {} : _e, _f = props.selectable, selectable = _f === void 0 ? false : _f, _g = props.multiSelect, multiSelect = _g === void 0 ? false : _g, selectedIdsProp = props.selectedIds, onSelectionChange = props.onSelectionChange, onRowClick = props.onRowClick, onRowDoubleClick = props.onRowDoubleClick, _h = props.pagination, pagination = _h === void 0 ? false : _h, paginationConfig = props.paginationConfig, onPaginationChange = props.onPaginationChange, _j = props.sortable, sortable = _j === void 0 ? false : _j, sortConfigProp = props.sortConfig, onSortChange = props.onSortChange, _k = props.filterable, filterable = _k === void 0 ? false : _k, filterConfigsProp = props.filterConfigs, onFilterChange = props.onFilterChange, _l = props.searchable, searchable = _l === void 0 ? false : _l, searchValueProp = props.searchValue, onSearchChange = props.onSearchChange, _m = props.searchPlaceholder, searchPlaceholder = _m === void 0 ? 'Search...' : _m, emptyMessage = props.emptyMessage, _o = props.loading, loading = _o === void 0 ? false : _o, error = props.error, actions = props.actions, _p = props.className, className = _p === void 0 ? '' : _p, rowClassName = props.rowClassName, _q = props.hover, hover = _q === void 0 ? true : _q, _r = props.striped, striped = _r === void 0 ? false : _r, titleField = props.titleField, subtitleField = props.subtitleField, imageField = props.imageField, dateField = props.dateField;
     // State
     var validPageSizes = utils_1.getDefaultPageSizes();
-    var _r = react_1.useState({
+    var _s = react_1.useState({
         view: viewProp,
         selectedIds: selectedIdsProp || new Set(),
         page: (paginationConfig === null || paginationConfig === void 0 ? void 0 : paginationConfig.page) || 1,
-        pageSize: (paginationConfig === null || paginationConfig === void 0 ? void 0 : paginationConfig.pageSize) && validPageSizes.includes(paginationConfig.pageSize) ? paginationConfig.pageSize : 10,
+        // If caller provides a pageSize via paginationConfig, respect it even if it's not in the default options
+        pageSize: (_a = paginationConfig === null || paginationConfig === void 0 ? void 0 : paginationConfig.pageSize) !== null && _a !== void 0 ? _a : 10,
         sort: sortConfigProp,
         filters: filterConfigsProp || [],
         search: searchValueProp || '',
         visibleColumns: new Set(columns.map(function (c) { return String(c.key); })),
         columnWidths: new Map(),
         bulkActionsOpen: false
-    }), state = _r[0], setState = _r[1];
+    }), state = _s[0], setState = _s[1];
     // Density state (separate from main state)
-    var _s = react_1.useState('comfortable'), density = _s[0], setDensity = _s[1];
+    var _t = react_1.useState('comfortable'), density = _t[0], setDensity = _t[1];
     // Refs to track internal updates and prevent circular syncing
     var isInternalFilterUpdate = react_1["default"].useRef(false);
     var isInternalSortUpdate = react_1["default"].useRef(false);
     var isInternalSearchUpdate = react_1["default"].useRef(false);
     // Filter dropdown state
-    var _t = react_1.useState(false), filterDropdownOpen = _t[0], setFilterDropdownOpen = _t[1];
-    var _u = react_1.useState(false), filterDialogOpen = _u[0], setFilterDialogOpen = _u[1];
-    var _v = react_1.useState(null), selectedFilterField = _v[0], setSelectedFilterField = _v[1];
-    var _w = react_1.useState('equals'), filterOperator = _w[0], setFilterOperator = _w[1];
-    var _x = react_1.useState(''), filterValue = _x[0], setFilterValue = _x[1];
-    var _y = react_1.useState(''), filterValue2 = _y[0], setFilterValue2 = _y[1]; // For 'between' operator
+    var _u = react_1.useState(false), filterDropdownOpen = _u[0], setFilterDropdownOpen = _u[1];
+    var _v = react_1.useState(false), filterDialogOpen = _v[0], setFilterDialogOpen = _v[1];
+    var _w = react_1.useState(null), selectedFilterField = _w[0], setSelectedFilterField = _w[1];
+    var _x = react_1.useState('equals'), filterOperator = _x[0], setFilterOperator = _x[1];
+    var _y = react_1.useState(''), filterValue = _y[0], setFilterValue = _y[1];
+    var _z = react_1.useState(''), filterValue2 = _z[0], setFilterValue2 = _z[1]; // For 'between' operator
     // Filter actions by type and position
     var toolbarBulkActions = react_1.useMemo(function () {
         if (!(actions === null || actions === void 0 ? void 0 : actions.actions))
@@ -145,7 +147,8 @@ function EntityList(props) {
     // Create action context
     var actionContext = react_1.useMemo(function () {
         var _a, _b;
-        if (!actions)
+        // Only provide an action context if the caller explicitly supplied one via actions.context
+        if (!actions || !actions.context)
             return undefined;
         return {
             selectedEntities: selectedEntities,
@@ -155,9 +158,9 @@ function EntityList(props) {
         };
     }, [actions, selectedEntities, state.selectedIds]);
     // Click handling state
-    var _z = react_1.useState(null), clickTimeoutRef = _z[0], setClickTimeoutRef = _z[1];
-    var _0 = react_1.useState(0), lastClickTime = _0[0], setLastClickTime = _0[1];
-    var _1 = react_1.useState(0), clickCount = _1[0], setClickCount = _1[1];
+    var _0 = react_1.useState(null), clickTimeoutRef = _0[0], setClickTimeoutRef = _0[1];
+    var _1 = react_1.useState(0), lastClickTime = _1[0], setLastClickTime = _1[1];
+    var _2 = react_1.useState(0), clickCount = _2[0], setClickCount = _2[1];
     // Sync external state
     react_1["default"].useEffect(function () {
         if (selectedIdsProp) {
@@ -196,9 +199,8 @@ function EntityList(props) {
     }, [paginationConfig === null || paginationConfig === void 0 ? void 0 : paginationConfig.page, state.page]);
     react_1["default"].useEffect(function () {
         if ((paginationConfig === null || paginationConfig === void 0 ? void 0 : paginationConfig.pageSize) !== undefined && paginationConfig.pageSize !== state.pageSize) {
-            var validPageSizes_1 = utils_1.getDefaultPageSizes();
-            var validPageSize_1 = validPageSizes_1.includes(paginationConfig.pageSize) ? paginationConfig.pageSize : 10;
-            setState(function (prev) { return (__assign(__assign({}, prev), { pageSize: validPageSize_1, page: 1 })); });
+            // Accept the provided pageSize directly and reset to page 1
+            setState(function (prev) { return (__assign(__assign({}, prev), { pageSize: paginationConfig.pageSize, page: 1 })); });
         }
     }, [paginationConfig === null || paginationConfig === void 0 ? void 0 : paginationConfig.pageSize, state.pageSize]);
     // Process data
@@ -223,7 +225,7 @@ function EntityList(props) {
         return result;
     }, [data, state.search, state.filters, state.sort, columns, paginationConfig]);
     // Pagination
-    var totalItems = (_a = paginationConfig === null || paginationConfig === void 0 ? void 0 : paginationConfig.totalCount) !== null && _a !== void 0 ? _a : processedData.length;
+    var totalItems = (_b = paginationConfig === null || paginationConfig === void 0 ? void 0 : paginationConfig.totalCount) !== null && _b !== void 0 ? _b : processedData.length;
     var totalPages = utils_1.getTotalPages(totalItems, state.pageSize);
     // For server-side pagination (when paginationConfig is provided), data is already paginated
     var paginatedData = paginationConfig
@@ -313,17 +315,44 @@ function EntityList(props) {
         setFilterValue2('');
     }, []);
     var handleSaveFilter = react_1.useCallback(function () {
+        var _a;
         if (!selectedFilterField) {
             return;
         }
-        // For isNull and isNotNull operators, no value is needed
-        if (filterOperator !== 'isNull' && filterOperator !== 'isNotNull' && !filterValue.trim()) {
-            return;
+        // Determine the final value shape depending on operator
+        var finalValue = '';
+        if (filterOperator === 'isNull' || filterOperator === 'isNotNull') {
+            finalValue = '';
+        }
+        else if (filterOperator === 'between') {
+            finalValue = filterValue2 ? [filterValue, filterValue2] : filterValue;
+        }
+        else if (filterOperator === 'in' || filterOperator === 'notIn') {
+            if (Array.isArray(filterValue)) {
+                finalValue = filterValue;
+            }
+            else {
+                finalValue = String(filterValue || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean);
+            }
+        }
+        else {
+            finalValue = Array.isArray(filterValue) ? ((_a = filterValue[0]) !== null && _a !== void 0 ? _a : '') : filterValue;
+        }
+        // For operators requiring a value, ensure we have one
+        if (filterOperator !== 'isNull' && filterOperator !== 'isNotNull') {
+            if (filterOperator === 'in' || filterOperator === 'notIn') {
+                if (!Array.isArray(finalValue) || finalValue.length === 0)
+                    return;
+            }
+            else {
+                if (!String(finalValue).trim())
+                    return;
+            }
         }
         var newFilter = {
             field: selectedFilterField,
             operator: filterOperator,
-            value: filterOperator === 'between' && filterValue2 ? [filterValue, filterValue2] : filterValue
+            value: finalValue
         };
         // Set ref BEFORE setState to ensure useEffect sees it
         isInternalFilterUpdate.current = true;
@@ -344,7 +373,7 @@ function EntityList(props) {
         setSelectedFilterField(filter.field);
         setFilterOperator(filter.operator);
         if (Array.isArray(filter.value)) {
-            setFilterValue(String(filter.value[0] || ''));
+            setFilterValue(filter.value);
             setFilterValue2(String(filter.value[1] || ''));
         }
         else {
@@ -639,7 +668,7 @@ function EntityList(props) {
                             }),
                             rowActions.length > 0 && (react_1["default"].createElement("td", { className: "px-3 sm:px-4 " + densityPadding + " whitespace-nowrap text-right text-sm", onClick: function (e) { return e.stopPropagation(); } },
                                 react_1["default"].createElement("div", { className: "flex justify-end gap-1 sm:gap-2" },
-                                    react_1["default"].createElement(actions_1.EntityActions, { actions: rowActions, entity: entity, context: actionContext, mode: (actions === null || actions === void 0 ? void 0 : actions.mode) || 'dropdown', position: 'row', className: (actions === null || actions === void 0 ? void 0 : actions.className) || '', onActionStart: actions === null || actions === void 0 ? void 0 : actions.onActionStart, onActionComplete: actions === null || actions === void 0 ? void 0 : actions.onActionComplete, onActionError: actions === null || actions === void 0 ? void 0 : actions.onActionError }))))));
+                                    react_1["default"].createElement(actions_1.EntityActions, { actions: rowActions, entity: entity, context: actionContext, mode: (actions === null || actions === void 0 ? void 0 : actions.mode) || 'buttons', position: 'row', className: (actions === null || actions === void 0 ? void 0 : actions.className) || '', onActionStart: actions === null || actions === void 0 ? void 0 : actions.onActionStart, onActionComplete: actions === null || actions === void 0 ? void 0 : actions.onActionComplete, onActionError: actions === null || actions === void 0 ? void 0 : actions.onActionError }))))));
                     }))))));
     }; // Render card view
     var renderCardView = function () {
@@ -667,7 +696,7 @@ function EntityList(props) {
                     }))),
                 rowActions.length > 0 && (react_1["default"].createElement("div", { className: "px-3 sm:px-4 pb-3 sm:pb-4 flex items-center gap-2 border-t pt-3", onClick: function (e) { return e.stopPropagation(); } },
                     react_1["default"].createElement("div", { onClick: function (e) { return e.stopPropagation(); } },
-                        react_1["default"].createElement(actions_1.EntityActions, { actions: rowActions, entity: entity, context: actionContext, mode: (actions === null || actions === void 0 ? void 0 : actions.mode) || 'dropdown', position: 'row', className: (actions === null || actions === void 0 ? void 0 : actions.className) || '', onActionStart: actions === null || actions === void 0 ? void 0 : actions.onActionStart, onActionComplete: actions === null || actions === void 0 ? void 0 : actions.onActionComplete, onActionError: actions === null || actions === void 0 ? void 0 : actions.onActionError }))))));
+                        react_1["default"].createElement(actions_1.EntityActions, { actions: rowActions, entity: entity, context: actionContext, mode: (actions === null || actions === void 0 ? void 0 : actions.mode) || 'buttons', position: 'row', className: (actions === null || actions === void 0 ? void 0 : actions.className) || '', onActionStart: actions === null || actions === void 0 ? void 0 : actions.onActionStart, onActionComplete: actions === null || actions === void 0 ? void 0 : actions.onActionComplete, onActionError: actions === null || actions === void 0 ? void 0 : actions.onActionError }))))));
         })));
     };
     // Render list view
@@ -682,7 +711,7 @@ function EntityList(props) {
                     react_1["default"].createElement("div", { className: "text-sm font-medium text-foreground truncate" }, title),
                     subtitle && react_1["default"].createElement("div", { className: "text-xs text-muted-foreground truncate mt-0.5" }, subtitle)),
                 rowActions.length > 0 && (react_1["default"].createElement("div", { className: "flex items-center gap-1 sm:gap-2 flex-shrink-0", onClick: function (e) { return e.stopPropagation(); } },
-                    react_1["default"].createElement(actions_1.EntityActions, { actions: rowActions, entity: entity, context: actionContext, mode: (actions === null || actions === void 0 ? void 0 : actions.mode) || 'dropdown', position: 'row', className: (actions === null || actions === void 0 ? void 0 : actions.className) || '', onActionStart: actions === null || actions === void 0 ? void 0 : actions.onActionStart, onActionComplete: actions === null || actions === void 0 ? void 0 : actions.onActionComplete, onActionError: actions === null || actions === void 0 ? void 0 : actions.onActionError })))));
+                    react_1["default"].createElement(actions_1.EntityActions, { actions: rowActions, entity: entity, context: actionContext, mode: (actions === null || actions === void 0 ? void 0 : actions.mode) || 'buttons', position: 'row', className: (actions === null || actions === void 0 ? void 0 : actions.className) || '', onActionStart: actions === null || actions === void 0 ? void 0 : actions.onActionStart, onActionComplete: actions === null || actions === void 0 ? void 0 : actions.onActionComplete, onActionError: actions === null || actions === void 0 ? void 0 : actions.onActionError })))));
         })));
     };
     // Render timeline view
@@ -696,7 +725,7 @@ function EntityList(props) {
                 return (react_1["default"].createElement("div", { key: entity.id, className: "relative pl-10 sm:pl-12" },
                     react_1["default"].createElement("div", { className: "absolute left-3 sm:left-4.5 top-2 w-3 h-3 rounded-full bg-primary border-2 border-background shadow-sm" }),
                     react_1["default"].createElement("div", { className: "bg-card rounded-lg border shadow-sm p-3 sm:p-4 hover:shadow-md transition-shadow cursor-pointer", onClick: function () { return handleRowClick(entity, index); }, onDoubleClick: function () { return handleRowClick(entity, index); } },
-                        date && (react_1["default"].createElement("div", { className: "text-xs font-medium text-primary mb-1.5 sm:mb-2" }, date.toLocaleDateString())),
+                        date && (react_1["default"].createElement("div", { className: "text-xs font-medium text-primary mb-1.5 sm:mb-2" }, date_fns_1.format(date, 'P'))),
                         react_1["default"].createElement("div", { className: "text-sm font-semibold text-foreground" }, title),
                         subtitle && react_1["default"].createElement("div", { className: "text-xs text-muted-foreground mt-1" }, subtitle))));
             })));
@@ -771,9 +800,16 @@ function EntityList(props) {
         // Determine empty state type
         var hasSearch = state.search && state.search.length > 0;
         var hasFilters = state.filters && state.filters.length > 0;
-        // Simple placeholder for create action - in real usage, pass proper handler
+        // If parent provided an onCreate handler, use it for empty state CTAs.
         var createAction = function () {
-            // Placeholder - implement actual create handler
+            if (typeof props.onCreate === 'function') {
+                try {
+                    props.onCreate();
+                }
+                catch ( /* swallow */_a) { /* swallow */ }
+                return;
+            }
+            // No-op when not provided
         };
         if (hasSearch) {
             return (react_1["default"].createElement("div", { className: "bg-card rounded-lg border shadow-sm overflow-hidden " + className },
@@ -787,6 +823,12 @@ function EntityList(props) {
                         setState(function (prev) { return (__assign(__assign({}, prev), { filters: [] })); });
                         onFilterChange === null || onFilterChange === void 0 ? void 0 : onFilterChange([]);
                     }, onCreate: createAction })));
+        }
+        // If caller provided an explicit emptyMessage, show a tailored EmptyState
+        if (emptyMessage) {
+            return (react_1["default"].createElement("div", { className: "bg-card rounded-lg border shadow-sm overflow-hidden " + className },
+                renderToolbar(),
+                react_1["default"].createElement(EmptyState_1.EmptyState, { title: emptyMessage, action: { label: 'Create item', onClick: createAction, icon: lucide_react_1.Plus } })));
         }
         return (react_1["default"].createElement("div", { className: "bg-card rounded-lg border shadow-sm overflow-hidden " + className },
             renderToolbar(),
@@ -808,6 +850,7 @@ function EntityList(props) {
     return (react_1["default"].createElement("div", { className: "bg-card rounded-lg border shadow-sm overflow-hidden " + className },
         renderToolbar(),
         loading ? (react_1["default"].createElement("div", { className: "p-4" },
+            react_1["default"].createElement("div", { className: "mb-3 text-sm text-muted-foreground" }, "Loading data..."),
             react_1["default"].createElement(Skeleton_1.ListSkeleton, { count: state.pageSize, view: state.view, density: density, columns: visibleColumns.length, showAvatar: !!imageField }))) : (react_1["default"].createElement("div", null, renderView())),
         renderPagination(),
         react_1["default"].createElement(dialog_1.Dialog, { open: filterDialogOpen, onOpenChange: setFilterDialogOpen },
@@ -816,7 +859,7 @@ function EntityList(props) {
                     react_1["default"].createElement(dialog_1.DialogTitle, null, "Add Filter"),
                     react_1["default"].createElement(dialog_1.DialogDescription, null,
                         "Filter by ",
-                        selectedFilterField && ((_b = columns.find(function (c) { return String(c.key) === selectedFilterField; })) === null || _b === void 0 ? void 0 : _b.label))),
+                        selectedFilterField && ((_c = columns.find(function (c) { return String(c.key) === selectedFilterField; })) === null || _c === void 0 ? void 0 : _c.label))),
                 react_1["default"].createElement("div", { className: "grid gap-4 py-4" },
                     react_1["default"].createElement("div", { className: "grid gap-2" },
                         react_1["default"].createElement(label_1.Label, { htmlFor: "filter-operator" }, "How to filter"),
@@ -832,9 +875,32 @@ function EntityList(props) {
                                 react_1["default"].createElement(select_1.SelectItem, { value: "lessThan" }, "Less than"),
                                 react_1["default"].createElement(select_1.SelectItem, { value: "isNull" }, "Is empty"),
                                 react_1["default"].createElement(select_1.SelectItem, { value: "isNotNull" }, "Is not empty")))),
-                    filterOperator !== 'isNull' && filterOperator !== 'isNotNull' && (react_1["default"].createElement("div", { className: "grid gap-2" },
-                        react_1["default"].createElement(label_1.Label, { htmlFor: "filter-value" }, "Search for"),
-                        react_1["default"].createElement(input_1.Input, { id: "filter-value", value: filterValue, onChange: function (e) { return setFilterValue(e.target.value); }, placeholder: "Type what you're looking for...", autoFocus: true }))),
+                    filterOperator !== 'isNull' && filterOperator !== 'isNotNull' && ((function () {
+                        var selectedColumn = selectedFilterField ? columns.find(function (c) { return String(c.key) === selectedFilterField; }) : undefined;
+                        var options = (selectedColumn && selectedColumn.filterOptions);
+                        // If the column provides filterOptions, render a select UI; support single and multi (for 'in' operator)
+                        if (options && options.length > 0) {
+                            if (filterOperator === 'in' || filterOperator === 'notIn') {
+                                return (react_1["default"].createElement("div", { className: "grid gap-2" },
+                                    react_1["default"].createElement(label_1.Label, { htmlFor: "filter-value" }, "Choose values"),
+                                    react_1["default"].createElement("select", { id: "filter-value", title: 'filter', multiple: true, value: Array.isArray(filterValue) ? filterValue : (filterValue ? String(filterValue).split(',') : []), onChange: function (e) {
+                                            var selected = Array.from(e.target.selectedOptions).map(function (o) { return o.value; });
+                                            setFilterValue(selected);
+                                        }, className: "w-full px-2 py-2 border border-input rounded-md bg-background text-sm" }, options.map(function (opt) { return (react_1["default"].createElement("option", { key: String(opt.value), value: String(opt.value) }, opt.label)); }))));
+                            }
+                            // Single-select
+                            return (react_1["default"].createElement("div", { className: "grid gap-2" },
+                                react_1["default"].createElement(label_1.Label, { htmlFor: "filter-value" }, "Choose value"),
+                                react_1["default"].createElement(select_1.Select, { value: String(filterValue), onValueChange: function (v) { return setFilterValue(v); } },
+                                    react_1["default"].createElement(select_1.SelectTrigger, { id: "filter-value" },
+                                        react_1["default"].createElement(select_1.SelectValue, { placeholder: "Select a value" })),
+                                    react_1["default"].createElement(select_1.SelectContent, null, options.map(function (opt) { return (react_1["default"].createElement(select_1.SelectItem, { key: String(opt.value), value: String(opt.value) }, opt.label)); })))));
+                        }
+                        // Fallback to text input when no options available
+                        return (react_1["default"].createElement("div", { className: "grid gap-2" },
+                            react_1["default"].createElement(label_1.Label, { htmlFor: "filter-value" }, "Search for"),
+                            react_1["default"].createElement(input_1.Input, { id: "filter-value", value: Array.isArray(filterValue) ? filterValue.join(',') : String(filterValue), onChange: function (e) { return setFilterValue(e.target.value); }, placeholder: "Type what you're looking for...", autoFocus: true })));
+                    })()),
                     filterOperator === 'between' && (react_1["default"].createElement("div", { className: "grid gap-2" },
                         react_1["default"].createElement(label_1.Label, { htmlFor: "filter-value2" }, "To Value"),
                         react_1["default"].createElement(input_1.Input, { id: "filter-value2", value: filterValue2, onChange: function (e) { return setFilterValue2(e.target.value); }, placeholder: "Enter end value" })))),

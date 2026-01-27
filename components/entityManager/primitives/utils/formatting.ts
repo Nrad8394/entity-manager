@@ -9,30 +9,46 @@
 /**
  * Format a date to string
  */
+import { format as dfFormat, parseISO, isValid, formatDistanceToNow } from 'date-fns';
+
 export function formatDate(
   date: Date | string | number,
   format: string = 'YYYY-MM-DD'
 ): string {
-  const d = new Date(date);
-  
-  if (isNaN(d.getTime())) {
-    return '';
+  // Convert common moment-style tokens to date-fns tokens
+  const tokenMap: Record<string, string> = {
+    'YYYY': 'yyyy',
+    'DD': 'dd',
+    'HH': 'HH',
+    'mm': 'mm',
+    'ss': 'ss',
+    'MM': 'MM'
+  };
+
+  let dfFormatStr = format;
+  Object.keys(tokenMap).forEach(k => {
+    dfFormatStr = dfFormatStr.replace(k, tokenMap[k]);
+  });
+
+  let d: Date;
+  if (date instanceof Date) d = date;
+  else if (typeof date === 'number') d = new Date(date);
+  else {
+    try {
+      d = parseISO(String(date));
+      if (!isValid(d)) d = new Date(String(date));
+    } catch {
+      d = new Date(String(date));
+    }
   }
 
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const hours = String(d.getHours()).padStart(2, '0');
-  const minutes = String(d.getMinutes()).padStart(2, '0');
-  const seconds = String(d.getSeconds()).padStart(2, '0');
-
-  return format
-    .replace('YYYY', String(year))
-    .replace('MM', month)
-    .replace('DD', day)
-    .replace('HH', hours)
-    .replace('mm', minutes)
-    .replace('ss', seconds);
+  if (!isValid(d)) return '';
+  try {
+    return dfFormat(d, dfFormatStr);
+  } catch {
+    // Fallback to ISO
+    return d.toISOString();
+  }
 }
 
 /**
@@ -177,24 +193,13 @@ export function snakeToTitle(text: string): string {
  * Format relative time
  */
 export function formatRelativeTime(date: Date | string | number): string {
-  const now = new Date();
-  const then = new Date(date);
-  const diffMs = now.getTime() - then.getTime();
-  const diffSec = Math.floor(diffMs / 1000);
-  const diffMin = Math.floor(diffSec / 60);
-  const diffHour = Math.floor(diffMin / 60);
-  const diffDay = Math.floor(diffHour / 24);
-
-  if (diffSec < 60) return 'just now';
-  if (diffMin < 60) return `${diffMin} minute${diffMin > 1 ? 's' : ''} ago`;
-  if (diffHour < 24) return `${diffHour} hour${diffHour > 1 ? 's' : ''} ago`;
-  if (diffDay < 30) return `${diffDay} day${diffDay > 1 ? 's' : ''} ago`;
-  
-  const diffMonth = Math.floor(diffDay / 30);
-  if (diffMonth < 12) return `${diffMonth} month${diffMonth > 1 ? 's' : ''} ago`;
-  
-  const diffYear = Math.floor(diffMonth / 12);
-  return `${diffYear} year${diffYear > 1 ? 's' : ''} ago`;
+  try {
+    const d = typeof date === 'string' ? parseISO(date) : (date instanceof Date ? date : new Date(date));
+    if (!isValid(d)) return '';
+    return formatDistanceToNow(d, { addSuffix: true });
+  } catch {
+    return '';
+  }
 }
 
 /**

@@ -8,6 +8,8 @@ import { LucideIcon } from 'lucide-react';
 import type { BaseEntity } from './types/entity';
 import { ReactNode } from 'react';
 import { FormField } from '../components/form/types';
+// Re-export commonly used form types for feature configs
+export type { FormField } from '../components/form/types';
 import { Column } from '../components/list/types';
 import { FormLayout as FormLayoutType } from '../components/form/types';
 import { FieldSection } from '../components/form/types';
@@ -154,6 +156,5 @@ export interface EntityConfig<T extends BaseEntity = BaseEntity> {
   
   // Display
   displayField?: keyof T;
-  searchFields?: Array<keyof T>;
   defaultSort?: { field: keyof T; direction: 'asc' | 'desc' };
 }

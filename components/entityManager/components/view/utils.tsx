@@ -93,12 +93,11 @@ export function formatFieldValue(
           className="field-image"
           width={400}
           height={300}
-          style={{ objectFit: 'contain' }}
+          style={{ objectFit: 'contain', width: 'auto', height: 'auto' }}
         />
       );
 
     case 'json':
-      return <pre className="json-value">{JSON.stringify(value, null, 2)}</pre>;
       return <pre className="json-value">{JSON.stringify(value, null, 2)}</pre>;
 
     case 'number':
@@ -108,6 +107,10 @@ export function formatFieldValue(
       return <a href={String(value)} target="_blank" rel="noopener noreferrer">Download File</a>;
 
     default:
+      // Handle arrays and objects without crashing React
+      if (Array.isArray(value) || (typeof value === 'object' && value !== null)) {
+        return <pre className="text-xs bg-muted p-2 rounded overflow-auto max-h-96">{JSON.stringify(value, null, 2)}</pre>;
+      }
       return String(value);
   }
 }
@@ -158,9 +161,42 @@ export function groupFields<T extends BaseEntity>(
   // Add ungrouped fields
   grouped.set(null, []);
 
+  // Populate inline field definitions declared inside groups (some configs declare fields inline in group.fields)
+  groups.forEach(group => {
+    const target = grouped.get(group.id) || [];
+    group.fields.forEach(f => {
+      if (typeof f !== 'string') {
+        // inline field definition
+        const inlineField = f as ViewField<T>;
+        target.push(inlineField);
+      }
+    });
+    grouped.set(group.id, target);
+  });
+
   // Assign fields to groups
   fields.forEach(field => {
-    const groupId = field.group || null;
+    // Prefer explicit field.group
+    let groupId: string | null = (field.group as string) || null;
+
+    // If no explicit group, attempt to find a group that lists this field key
+    if (!groupId && groups && groups.length > 0) {
+      for (const g of groups) {
+        if (!g || !g.fields) continue;
+        // g.fields may contain strings (field keys) or inline field defs
+        const contains = g.fields.some(f => {
+          if (typeof f === 'string') return String(f) === String(field.key);
+          // inline field object
+          const inline = f as ViewField<T>;
+          return inline?.key && String(inline.key) === String(field.key);
+        });
+        if (contains) {
+          groupId = g.id;
+          break;
+        }
+      }
+    }
+
     const groupFields = grouped.get(groupId) || [];
     groupFields.push(field);
     grouped.set(groupId, groupFields);

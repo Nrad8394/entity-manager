@@ -18,6 +18,8 @@ import {
   FieldRenderProps,
 } from './types';
 import { ViewField, ViewTab, FieldGroup } from './types';
+import { Action } from '../actions/types';
+import { EntityActions } from '../actions';
 import {
   getVisibleFields,
   renderField,
@@ -82,11 +84,41 @@ export function EntityView<T extends BaseEntity = BaseEntity>({
   className = '',
   onCopy,
   actions,
+  actionContext,
+  onActionComplete,
 }: EntityViewProps<T>): React.ReactElement {
   const [state, setState] = useState<ViewState>({
     activeTab: tabs?.[0]?.id,
     collapsedGroups: new Set<string>(),
   });
+
+  /**
+   * Process actions - convert Action array to React nodes or pass through
+   */
+  const processedActions = React.useMemo(() => {
+    if (!actions) return undefined;
+    
+    // If actions is already a React node, return as-is
+    if (React.isValidElement(actions) || typeof actions === 'string' || typeof actions === 'number') {
+      return actions;
+    }
+    
+    // If actions is an array of Action objects, render with EntityActions
+    if (Array.isArray(actions) && actions.length > 0 && 'id' in actions[0]) {
+      return (
+        <EntityActions<T>
+          actions={actions as Action<T>[]}
+          entity={entity}
+          context={actionContext}
+          mode="buttons"
+          position="row"
+          onActionComplete={(actionId) => onActionComplete?.(actionId)}
+        />
+      );
+    }
+    
+    return undefined;
+  }, [actions, entity, actionContext, onActionComplete]);
 
   /**
    * Toggle group collapse
@@ -155,7 +187,7 @@ export function EntityView<T extends BaseEntity = BaseEntity>({
   // Render based on mode
   switch (mode) {
     case 'card':
-      return <CardView entity={entity} fields={visibleFields} titleField={titleField} subtitleField={subtitleField} imageField={imageField} actions={actions} className={className} />;
+      return <CardView entity={entity} fields={visibleFields} titleField={titleField} subtitleField={subtitleField} imageField={imageField} actions={processedActions} className={className} />;
 
     case 'summary':
       return <SummaryView entity={entity} fields={getSummaryFields(visibleFields)} className={className} />;
@@ -167,7 +199,7 @@ export function EntityView<T extends BaseEntity = BaseEntity>({
       return <CompactView entity={entity} fields={visibleFields} titleField={titleField} className={className} onCopy={handleCopy} copiedField={state.copiedField} />;
 
     case 'profile':
-      return <ProfileView entity={entity} fields={visibleFields} groups={groups} titleField={titleField} subtitleField={subtitleField} imageField={imageField} actions={actions} className={className} state={state} toggleGroup={toggleGroup} onCopy={handleCopy} copiedField={state.copiedField} />;
+      return <ProfileView entity={entity} fields={visibleFields} groups={groups} titleField={titleField} subtitleField={subtitleField} imageField={imageField} actions={processedActions} className={className} state={state} toggleGroup={toggleGroup} onCopy={handleCopy} copiedField={state.copiedField} />;
 
     case 'split':
       return <SplitView entity={entity} fields={visibleFields} groups={groups} titleField={titleField} subtitleField={subtitleField} className={className} state={state} toggleGroup={toggleGroup} onCopy={handleCopy} copiedField={state.copiedField} />;
@@ -186,7 +218,7 @@ export function EntityView<T extends BaseEntity = BaseEntity>({
           tabs={tabs}
           showMetadata={showMetadata}
           titleField={titleField}
-          actions={actions}
+          actions={processedActions}
           className={className}
           onToggleGroup={toggleGroup}
           onCopy={handleCopy}
@@ -198,13 +230,15 @@ export function EntityView<T extends BaseEntity = BaseEntity>({
 }
 
 // Internal props used by the various sub-views
-type InternalViewProps<T extends BaseEntity> = EntityViewProps<T> & {
+type InternalViewProps<T extends BaseEntity> = Omit<EntityViewProps<T>, 'actions'> & {
   state?: ViewState;
   /** Backwards-compatible aliases: some call sites use toggleGroup, others use onToggleGroup */
   toggleGroup?: (groupId: string) => void;
   onToggleGroup?: (groupId: string) => void;
   onTabChange?: (tabId: string) => void;
   copiedField?: string;
+  /** Actions as processed React nodes only (not Action array) */
+  actions?: React.ReactNode;
 };
 
 /**
@@ -352,13 +386,34 @@ function DetailView<T extends BaseEntity>({
             {tabs.map((tab: ViewTab<T>) => {
               if (tab.id !== state?.activeTab) return null;
 
-              const TabContent = tab.content as React.ComponentType<{ entity: T }> | React.ReactNode;
+              // Auto-generate content from groups if tab.content is not provided but tab.id matches a group.id
+              let tabContent: React.ReactNode = null;
+              if (tab.content) {
+                const TabContent = tab.content as React.ComponentType<{ entity: T }> | React.ReactNode;
+                tabContent = typeof TabContent === 'function' ? (() => {
+                  const Component = TabContent as React.ComponentType<{ entity: T }>;
+                  return <Component entity={entity} />;
+                })() : TabContent;
+              } else {
+                // Try to find a matching group and render its fields
+                const matchingGroup = groups?.find(g => g.id === tab.id);
+                if (matchingGroup) {
+                  const groupFields = groupedFields.get(matchingGroup.id);
+                  if (groupFields && groupFields.length > 0) {
+                    tabContent = (
+                      <div className="space-y-2 sm:space-y-3">
+                        {groupFields.map(field => (
+                          <FieldRow key={String(field.key)} field={field} value={getFieldValue(entity, field.key)} entity={entity} onCopy={onCopy} copiedField={copiedField} />
+                        ))}
+                      </div>
+                    );
+                  }
+                }
+              }
+
               return (
                 <div key={tab.id} role="tabpanel" id={`tabpanel-${tab.id}`} aria-labelledby={`tab-${tab.id}`}>
-                  {typeof TabContent === 'function' ? (() => {
-                    const Component = TabContent as React.ComponentType<{ entity: T }>;
-                    return <Component entity={entity} />;
-                  })() : TabContent}
+                  {tabContent}
                 </div>
               );
             })}

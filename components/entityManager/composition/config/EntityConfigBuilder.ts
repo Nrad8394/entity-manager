@@ -14,6 +14,7 @@ import { FormField } from '../../components/form/types';
 import { ViewField } from '../../components/view/types';
 import { Action } from '../../components/actions/types';
 import { ExportField } from '../../components/exporter/types';
+import { format, parseISO } from 'date-fns';
 
 /**
  * Entity config builder class
@@ -301,10 +302,12 @@ export class EntityConfigBuilder<T extends BaseEntity = BaseEntity> {
    * Auto-generate export fields from columns
    */
   autoExportFields(): this {
-    this.config.exportFields = this.config.columns!.map(col => ({
+    this.config.exportFields = this.config.columns!.map<ExportField<T>>(col => ({
       key: String(col.key),
       label: typeof col.label === 'string' ? col.label : String(col.label ?? ''),
-      formatter: col.formatter as any
+      formatter: col.formatter
+        ? ((value: unknown, entity: T) => col.formatter!(value, entity))
+        : undefined
     }));
     return this;
   }
@@ -313,13 +316,13 @@ export class EntityConfigBuilder<T extends BaseEntity = BaseEntity> {
    * Auto-generate view fields from columns
    */
   autoViewFields(): this {
-    this.config.viewFields = this.config.columns!.map(col => {
+    this.config.viewFields = this.config.columns!.map<ViewField<T>>(col => {
       // Map select type to text for view fields
       const viewType = col.type === 'select' ? 'text' : col.type;
       return {
         key: String(col.key),
         label: typeof col.label === 'string' ? col.label : String(col.label ?? ''),
-        type: viewType as any,
+        type: viewType as ViewField<T>['type'],
         visible: col.visible,
         order: col.order
       };
@@ -369,7 +372,57 @@ export class EntityConfigBuilder<T extends BaseEntity = BaseEntity> {
         options: {},
       } as EntityExporterConfig<T>,
     } as EntityConfig<T>;
-    
+    // Ensure datetime columns have a sensible default formatter so callers
+    // don't need to provide manual renderers in every config.
+    if (entityConfig.list && Array.isArray(entityConfig.list.columns)) {
+      entityConfig.list.columns = entityConfig.list.columns.map(col => {
+        const c = { ...col } as Column<T>;
+        if (c.type === 'datetime' && !c.formatter) {
+          c.formatter = (value: unknown) => {
+            if (value === null || value === undefined || value === '') return '';
+            if (value instanceof Date) return format(value, 'Pp');
+            try {
+              if (typeof value === 'string') {
+                const parsed = parseISO(value);
+                if (!isNaN(parsed.getTime())) return format(parsed, 'Pp');
+              }
+              if (typeof value === 'number') {
+                const parsed = new Date(value);
+                if (!isNaN(parsed.getTime())) return format(parsed, 'Pp');
+              }
+              const parsed = parseISO(String(value));
+              if (!isNaN(parsed.getTime())) return format(parsed, 'Pp');
+              return String(value);
+            } catch {
+              return String(value);
+            }
+          };
+        }
+        if (c.type === 'date' && !c.formatter) {
+          c.formatter = (value: unknown) => {
+            if (value === null || value === undefined || value === '') return '';
+            if (value instanceof Date) return format(value, 'P');
+            try {
+              if (typeof value === 'string') {
+                const parsed = parseISO(value);
+                if (!isNaN(parsed.getTime())) return format(parsed, 'P');
+              }
+              if (typeof value === 'number') {
+                const parsed = new Date(value);
+                if (!isNaN(parsed.getTime())) return format(parsed, 'P');
+              }
+              const parsed = parseISO(String(value));
+              if (!isNaN(parsed.getTime())) return format(parsed, 'P');
+              return String(value);
+            } catch {
+              return String(value);
+            }
+          };
+        }
+        return c;
+      });
+    }
+
     return entityConfig;
   }
 

@@ -48,7 +48,7 @@ const emptyStateContent: Record<
 > = {
   'no-data': {
     icon: Inbox,
-    title: 'No items yet',
+    title: 'No data',
     description: 'Get started by creating your first item.',
   },
   'no-results': {
@@ -235,7 +235,7 @@ export function CreateEmptyState({
   return (
     <EmptyState
       reason="no-data"
-      title={`No ${entityName}s yet`}
+      title={`No data`}
       description={`Get started by creating your first ${entityName}.`}
       icon={Package}
       action={{

@@ -7,11 +7,13 @@
 
  'use client';
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { format as dfFormat } from 'date-fns';
 import Image from 'next/image';
 import { BaseEntity, FilterConfig } from '../../primitives/types';
 import { EntityActions } from '../actions';
 import { Action, ActionContext } from '../actions/types';
+import { getEnabledActions } from '../actions/utils';
 import { 
   EntityListProps, 
   ListView, 
@@ -34,12 +36,12 @@ import {
   getDefaultPageSizes
 } from './utils';
 import { ListSkeleton } from './components/Skeleton';
-import { CreateEmptyState, SearchEmptyState, FilterEmptyState } from './components/EmptyState';
+import { EmptyState, CreateEmptyState, SearchEmptyState, FilterEmptyState } from './components/EmptyState';
 import { ErrorState } from './components/ErrorState';
 import { DensitySelector } from './components/DensitySelector';
 import { ViewSelector } from './components/ViewSelector';
 import { ListDensity } from './variants';
-import { Filter, X } from 'lucide-react';
+import { Filter, X, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
@@ -78,6 +80,7 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
     searchValue: searchValueProp,
     onSearchChange,
     searchPlaceholder = 'Search...',
+    emptyMessage,
     loading = false,
     error,
     actions,
@@ -91,13 +94,22 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
     dateField
   } = props;
 
+  console.log('📋 EntityList rendered with:', {
+    dataLength: data.length,
+    hasPaginationConfig: !!paginationConfig,
+    paginationConfig,
+    searchable,
+    searchValueProp,
+    hasOnSearchChange: !!onSearchChange,
+  });
+
   // State
-  const validPageSizes = getDefaultPageSizes();
   const [state, setState] = useState<ListState>({
     view: viewProp,
     selectedIds: selectedIdsProp || new Set(),
-    page: paginationConfig?.page || 1,
-    pageSize: paginationConfig?.pageSize && validPageSizes.includes(paginationConfig.pageSize) ? paginationConfig.pageSize : 10,
+    page: Math.max(1, paginationConfig?.page ?? 1),
+    // If caller provides a pageSize via paginationConfig, respect it even if it's not in the default options
+    pageSize: Math.max(1, paginationConfig?.pageSize ?? 10),
     sort: sortConfigProp,
     filters: filterConfigsProp || [],
     search: searchValueProp || '',
@@ -114,6 +126,18 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
   const isInternalSortUpdate = React.useRef(false);
   const isInternalSearchUpdate = React.useRef(false);
 
+  // Sync local state with parent's paginationConfig when it changes
+  useEffect(() => {
+    if (paginationConfig?.page !== undefined && paginationConfig.page !== state.page) {
+      setState(prev => ({ ...prev, page: paginationConfig.page }));
+    }
+    if (paginationConfig?.pageSize !== undefined && paginationConfig.pageSize !== state.pageSize) {
+      console.log('🔄 Syncing pageSize from parent:', paginationConfig.pageSize);
+      setState(prev => ({ ...prev, pageSize: paginationConfig.pageSize }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paginationConfig?.page, paginationConfig?.pageSize]);
+
   // Filter dropdown state
   const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
 
@@ -123,49 +147,67 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [selectedFilterField, setSelectedFilterField] = useState<string | null>(null);
   const [filterOperator, setFilterOperator] = useState<FilterOperator>('equals');
-  const [filterValue, setFilterValue] = useState('');
+  const [filterValue, setFilterValue] = useState<string | string[]>('');
   const [filterValue2, setFilterValue2] = useState(''); // For 'between' operator
 
-  // Filter actions by type and position
-  const toolbarBulkActions = useMemo(() => {
-    if (!actions?.actions) return [];
-    return actions.actions.filter((action: Action<T>) => 
-      action.actionType === 'bulk' && 
-      (action.position === 'toolbar' || !action.position)
-    );
-  }, [actions?.actions]);
-
-  const toolbarNonBulkActions = useMemo(() => {
-    if (!actions?.actions) return [];
-    return actions.actions.filter((action: Action<T>) => 
-      action.actionType !== 'bulk' && 
-      action.position === 'toolbar'
-    );
-  }, [actions?.actions]);
-
-  const rowActions = useMemo(() => {
-    if (!actions?.actions) return [];
-    return actions.actions.filter((action: Action<T>) => 
-      action.actionType !== 'bulk' && 
-      (action.position === 'row' || action.position === 'dropdown' || action.position === 'context-menu' || !action.position)
-    );
-  }, [actions?.actions]);
-
-  // Get selected entities for bulk actions
+  // Get selected entities for bulk actions (defined early so actionContext can be used by toolbars)
   const selectedEntities = useMemo(() => {
     return data.filter(entity => state.selectedIds.has(entity.id));
   }, [data, state.selectedIds]);
 
-  // Create action context
+  // Create action context (include user permissions and entityPermissions when provided)
   const actionContext = useMemo<ActionContext<T> | undefined>(() => {
-    if (!actions) return undefined;
+    // Only provide an action context if the caller explicitly supplied one via actions.context
+    if (!actions || !actions.context) return undefined;
     return {
       selectedEntities,
       selectedIds: state.selectedIds,
       refresh: actions.context?.refresh,
       customData: actions.context?.customData,
-    };
+      permissions: actions.context?.permissions,
+    } as ActionContext<T>;
   }, [actions, selectedEntities, state.selectedIds]);
+
+  // Filter actions by type and position
+  const toolbarBulkActions = useMemo(() => {
+    if (!actions?.actions) return [];
+    // Filter by position and permissions/visibility
+    const candidates = (actions.actions as Action<T>[]).filter((action: Action<T>) => 
+      action.actionType === 'bulk' && 
+      (action.position === 'toolbar' || !action.position)
+    );
+    // Use action context to further filter enabled/visible actions
+    return actionContext ? getEnabledActions(candidates, undefined, actionContext) : candidates;
+  }, [actions, actionContext]);
+
+  const toolbarNonBulkActions = useMemo(() => {
+    if (!actions?.actions) return [];
+    const candidates = (actions.actions as Action<T>[]).filter((action: Action<T>) => 
+      action.actionType !== 'bulk' && 
+      action.position === 'toolbar'
+    );
+    try {
+      return actionContext ? getEnabledActions(candidates, undefined, actionContext) : candidates;
+    } catch {
+      return candidates;
+    }
+  }, [actions, actionContext]);
+
+  const rowActions = useMemo(() => {
+    if (!actions?.actions) return [];
+    const candidates = (actions.actions as Action<T>[]).filter((action: Action<T>) => 
+      action.actionType !== 'bulk' && 
+      (action.position === 'row' || action.position === 'dropdown' || action.position === 'context-menu' || !action.position)
+    );
+    try {
+      // For row actions we can't evaluate visibility without an entity; return all candidates here and let EntityActions filter per-row.
+      return candidates;
+    } catch {
+      return candidates;
+    }
+  }, [actions]);
+
+  
 
   // Click handling state
   const [clickTimeoutRef, setClickTimeoutRef] = useState<NodeJS.Timeout | null>(null);
@@ -216,29 +258,55 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
 
   React.useEffect(() => {
     if (paginationConfig?.pageSize !== undefined && paginationConfig.pageSize !== state.pageSize) {
-      const validPageSizes = getDefaultPageSizes();
-      const validPageSize = validPageSizes.includes(paginationConfig.pageSize) ? paginationConfig.pageSize : 10;
-      setState(prev => ({ ...prev, pageSize: validPageSize, page: 1 }));
+      // Accept the provided pageSize directly and reset to page 1
+      setState(prev => ({ ...prev, pageSize: paginationConfig.pageSize as number, page: 1 }));
     }
   }, [paginationConfig?.pageSize, state.pageSize]);
+
+  // Validate page is within bounds when data or totalCount changes
+  React.useEffect(() => {
+    // Calculate total pages based on available data
+    const itemsToUse = paginationConfig?.totalCount ?? data.length;
+    const totalPagesForData = itemsToUse > 0 ? Math.ceil(itemsToUse / state.pageSize) : 0;
+    
+    // If current page exceeds total pages, reset to page 1
+    if (totalPagesForData > 0 && state.page > totalPagesForData) {
+      setState(prev => ({ ...prev, page: Math.max(1, totalPagesForData) }));
+    }
+  }, [data.length, paginationConfig, state.pageSize, state.page]);
 
   // Process data
   const processedData = useMemo(() => {
     // If using server-side pagination, data is already filtered, sorted, and paginated
     if (paginationConfig) {
+      console.log('✅ SERVER-SIDE PAGINATION: Returning data as-is (no client-side filtering)', { 
+        dataCount: data.length,
+        search: state.search,
+        filters: state.filters.length,
+      });
       return data;
     }
+
+    console.log('⚠️ CLIENT-SIDE PROCESSING: Applying client-side filters', {
+      dataCount: data.length,
+      search: state.search,
+      filters: state.filters.length,
+    });
 
     let result = [...data];
     
     // Search
     if (state.search) {
+      const before = result.length;
       result = searchEntities(result, state.search, columns);
+      console.log('🔍 After client-side search:', { before, after: result.length });
     }
     
     // Filter
     if (state.filters.length > 0) {
+      const before = result.length;
       result = filterEntities(result, state.filters);
+      console.log('🔗 After client-side filter:', { before, after: result.length });
     }
     
     // Sort
@@ -252,6 +320,7 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
   // Pagination
   const totalItems = paginationConfig?.totalCount ?? processedData.length;
   const totalPages = getTotalPages(totalItems, state.pageSize);
+
   // For server-side pagination (when paginationConfig is provided), data is already paginated
   const paginatedData = paginationConfig 
     ? processedData 
@@ -272,10 +341,18 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
     onSelectionChange?.(empty, []);
   }, [onSelectionChange]);
 
+  // Derive whether multi select should be enabled. Allow explicit prop to override, but
+  // also enable multi-select automatically when bulk actions are available (legacy or normalized).
+  const hasBulkActions = !!(
+    Array.isArray(actions?.actions) && 
+    (actions.actions as Action<T>[]).some((a: Action<T>) => a.actionType === 'bulk')
+  );
+  const allowMultiSelect = multiSelect || hasBulkActions;
+
   const handleSelectRow = useCallback((id: string | number) => {
     setState(prev => {
       const newSelected = new Set(prev.selectedIds);
-      if (multiSelect) {
+      if (allowMultiSelect) {
         if (newSelected.has(id)) {
           newSelected.delete(id);
         } else {
@@ -289,13 +366,19 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
       onSelectionChange?.(newSelected, selectedEntities);
       return { ...prev, selectedIds: newSelected };
     });
-  }, [multiSelect, onSelectionChange, data]);
+  }, [allowMultiSelect, onSelectionChange, data]);
 
   // Search handler
   const handleSearchChange = useCallback((value: string) => {
+    console.log('🔍 handleSearchChange called:', { value, hasOnSearchChange: !!onSearchChange });
     isInternalSearchUpdate.current = true;
     setState(prev => ({ ...prev, search: value, page: 1 }));
-    onSearchChange?.(value);
+    if (onSearchChange) {
+      console.log('📞 Calling onSearchChange callback with:', value);
+      onSearchChange(value);
+    } else {
+      console.warn('⚠️ onSearchChange callback not provided!');
+    }
   }, [onSearchChange]);
 
   // Sort handler
@@ -312,10 +395,19 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
 
   // Pagination handlers
   const handlePageChange = useCallback((page: number) => {
-    setState(prev => ({ ...prev, page }));
+    // For server-side pagination, calculate totalPages from paginationConfig
+    const maxPage = paginationConfig ? Math.ceil((paginationConfig.totalCount ?? 0) / (paginationConfig.pageSize ?? 10)) : (totalPages || 1);
+    
+    // Validate page is at least 1 and doesn't exceed max
+    const validPage = Math.max(1, Math.min(page, maxPage || 1));
+    
+    // Update local state immediately for responsive UI
+    setState(prev => ({ ...prev, page: validPage }));
+    
+    // Notify parent with both page and pageSize
     const pageSize = paginationConfig?.pageSize ?? state.pageSize;
-    onPaginationChange?.({ ...(paginationConfig ?? {}), page, pageSize });
-  }, [paginationConfig, onPaginationChange, state.pageSize]);
+    onPaginationChange?.({ ...(paginationConfig ?? {}), page: validPage, pageSize });
+  }, [paginationConfig, onPaginationChange, state.pageSize, totalPages]);
 
   const handlePageSizeChange = useCallback((pageSize: number) => {
     setState(prev => ({ ...prev, pageSize, page: 1 }));
@@ -330,13 +422,24 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
   // Filter handlers
   const handleOpenFilterDialog = useCallback((field: string) => {
     setSelectedFilterField(field);
-    setFilterOperator('contains');
+    
+    // Detect field type and set appropriate operator
+    const selectedColumn = columns.find(c => String(c.key) === field);
+    const fieldType = selectedColumn?.type || 'text';
+    
+    // Set default operator based on field type
+    if (fieldType === 'boolean') {
+      setFilterOperator('equals');
+    } else {
+      setFilterOperator('contains');
+    }
+    
     setFilterValue('');
     setFilterValue2('');
     setFilterDialogOpen(true);
     // Close the dropdown menu to prevent double requests
     setFilterDropdownOpen(false);
-  }, []);
+  }, [columns]);
 
   const handleCloseFilterDialog = useCallback(() => {
     setFilterDialogOpen(false);
@@ -351,15 +454,45 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
       return;
     }
 
-    // For isNull and isNotNull operators, no value is needed
-    if (filterOperator !== 'isNull' && filterOperator !== 'isNotNull' && !filterValue.trim()) {
-      return;
+    // Determine the final value shape depending on operator
+    let finalValue: unknown = '';
+
+    if (filterOperator === 'isNull' || filterOperator === 'isNotNull') {
+      finalValue = '';
+    } else if (filterOperator === 'between') {
+      finalValue = filterValue2 ? [filterValue, filterValue2] : filterValue;
+    } else if (filterOperator === 'in' || filterOperator === 'notIn') {
+      if (Array.isArray(filterValue)) {
+        finalValue = filterValue;
+      } else {
+        finalValue = String(filterValue || '').split(',').map(s => s.trim()).filter(Boolean);
+      }
+    } else {
+      // Check if this is a boolean field
+      const selectedColumn = selectedFilterField ? columns.find(c => String(c.key) === selectedFilterField) : undefined;
+      const fieldType = selectedColumn?.type || 'text';
+      
+      // For boolean fields, ensure the value is a proper boolean
+      if (fieldType === 'boolean') {
+        finalValue = String(filterValue) === 'true';
+      } else {
+        finalValue = Array.isArray(filterValue) ? (filterValue[0] ?? '') : filterValue;
+      }
+    }
+
+    // For operators requiring a value, ensure we have one
+    if (filterOperator !== 'isNull' && filterOperator !== 'isNotNull') {
+      if (filterOperator === 'in' || filterOperator === 'notIn') {
+        if (!Array.isArray(finalValue) || finalValue.length === 0) return;
+      } else {
+        if (!String(finalValue).trim()) return;
+      }
     }
 
     const newFilter: FilterConfig = {
       field: selectedFilterField,
       operator: filterOperator,
-      value: filterOperator === 'between' && filterValue2 ? [filterValue, filterValue2] : filterValue,
+      value: finalValue,
     };
 
     // Set ref BEFORE setState to ensure useEffect sees it
@@ -381,7 +514,7 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
     });
 
     handleCloseFilterDialog();
-  }, [selectedFilterField, filterOperator, filterValue, filterValue2, onFilterChange, handleCloseFilterDialog]);
+  }, [selectedFilterField, filterOperator, filterValue, filterValue2, onFilterChange, handleCloseFilterDialog, columns]);
 
   const handleEditFilter = useCallback((index: number) => {
     const filter = state.filters[index];
@@ -389,7 +522,7 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
     setFilterOperator(filter.operator as FilterOperator);
     
     if (Array.isArray(filter.value)) {
-      setFilterValue(String(filter.value[0] || ''));
+      setFilterValue(filter.value as string[]);
       setFilterValue2(String(filter.value[1] || ''));
     } else {
       setFilterValue(String(filter.value || ''));
@@ -570,7 +703,10 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
                   type="text"
                   placeholder={searchPlaceholder}
                   value={state.search}
-                  onChange={(e) => handleSearchChange(e.target.value)}
+                  onChange={(e) => {
+                    console.log('🔤 Search input onChange fired:', { value: e.target.value, timestamp: new Date().toISOString() });
+                    handleSearchChange(e.target.value);
+                  }}
                   className="w-full pl-10 pr-4 py-2 text-sm border border-input bg-background rounded-md focus:outline-none focus:ring-2 focus:ring-ring focus:border-transparent transition-shadow"
                   aria-label="Search"
                 />
@@ -727,7 +863,7 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
 
   // Render pagination
 
-  const renderActionLabel = (maybeLabel: any) => {
+  const renderActionLabel = (maybeLabel: React.ReactNode | ((entity?: T) => React.ReactNode)) => {
     if (typeof maybeLabel === 'function') {
       try {
         return maybeLabel(undefined);
@@ -738,10 +874,10 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
     return maybeLabel;
   };
   // Render icon which may be a React node or a component type
-  const renderIcon = (icon: any) => {
+  const renderIcon = (icon: React.ReactNode | React.ComponentType | undefined) => {
     if (!icon) return null;
     if (typeof icon === 'function') {
-      const IconComp = icon as React.ComponentType<any>;
+      const IconComp = icon as React.ComponentType;
       try {
         return <IconComp />;
       } catch {
@@ -753,12 +889,32 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
   const renderPagination = () => {
     if (!pagination) return null;
 
+    // Handle edge case: if totalItems is 0, show 0 to 0 of 0
+    if (totalItems === 0) {
+      return (
+        <nav 
+          className="flex flex-col gap-3 sm:gap-4 px-3 sm:px-4 py-3 bg-card border-t" 
+          role="navigation" 
+          aria-label="Pagination"
+        >
+          {/* Results info - always visible */}
+          <div className="text-xs sm:text-sm text-muted-foreground text-center sm:text-left">
+            No results to display
+          </div>
+        </nav>
+      );
+    }
+
+    // For server-side pagination, use totalItems; for client-side, use processedData.length
+    const itemsForDisplay = paginationConfig ? totalItems : processedData.length;
+    // Use local state for display (it updates immediately when user clicks)
+    // Parent prop is used only for external syncing via useEffect above
     const startItem = ((state.page - 1) * state.pageSize) + 1;
-    const endItem = Math.min(state.page * state.pageSize, processedData.length);
+    const endItem = Math.min(state.page * state.pageSize, itemsForDisplay);
 
     return (
       <nav 
-        className="flex flex-col gap-3 sm:gap-4 px-3 sm:px-4 py-3 bg-card border-t" 
+        className="flex z-0 flex-col gap-3 sm:gap-4 px-3 sm:px-4 py-3 bg-card border-t" 
         role="navigation" 
         aria-label="Pagination"
       >
@@ -798,15 +954,15 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
             
             <button
               onClick={() => handlePageChange(state.page + 1)}
-              disabled={state.page >= totalPages}
+              disabled={state.page >= totalPages || totalPages <= 0}
               className="px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium border border-input rounded-md bg-background hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               aria-label="Go to next page"
             >
               Next
             </button>
             <button
-              onClick={() => handlePageChange(totalPages)}
-              disabled={state.page >= totalPages}
+              onClick={() => handlePageChange(Math.max(1, totalPages))}
+              disabled={state.page >= totalPages || totalPages === 0}
               className="hidden sm:inline-flex px-2 sm:px-3 py-1.5 text-xs sm:text-sm font-medium border border-input rounded-md bg-background hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               aria-label="Go to last page"
             >
@@ -843,14 +999,15 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
   // Render table view
   const renderTableView = () => {
     return (
-      <div className="relative overflow-x-hidden -mx-4 sm:mx-0 p-2">
-        <div className="inline-block min-w-full align-middle max-w-full">
-          <table className="min-w-full divide-y divide-border text-sm w-full">
+      <div className="relative w-full">
+        <div className="overflow-x-auto overflow-y-visible -mx-4 sm:mx-0 p-2 pb-64">
+          <div className="inline-block min-w-full align-middle max-w-full">
+            <table className="min-w-full divide-y divide-border text-sm w-full">
             <thead className="bg-muted/50">
               <tr>
                 {selectable && (
                   <th scope="col" className="px-3 sm:px-4 py-3 w-12">
-                    {multiSelect && (
+                    {allowMultiSelect && (
                       <input
                         title="Select all"
                         aria-label="Select all"
@@ -933,13 +1090,13 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
                       );
                     })}
                     {rowActions.length > 0 && (
-                      <td className={`px-3 sm:px-4 ${densityPadding} whitespace-nowrap text-right text-sm`} onClick={(e) => e.stopPropagation()}>
+                      <td className={`px-3 sm:px-4 ${densityPadding} whitespace-nowrap text-right text-sm relative z-20`} onClick={(e) => e.stopPropagation()}>
                         <div className="flex justify-end gap-1 sm:gap-2">
                           <EntityActions 
                             actions={rowActions}
                             entity={entity}
                             context={actionContext}
-                            mode={actions?.mode || 'dropdown'}
+                            mode={actions?.mode || 'buttons'}
                             position={'row'}
                             className={actions?.className || ''}
                             onActionStart={actions?.onActionStart}
@@ -954,6 +1111,7 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
               })}
             </tbody>
           </table>
+          </div>
         </div>
       </div>
     );
@@ -1020,16 +1178,16 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
                 <div className="px-3 sm:px-4 pb-3 sm:pb-4 flex items-center gap-2 border-t pt-3" onClick={(e) => e.stopPropagation()}>
                   <div onClick={(e) => e.stopPropagation()}>
                     <EntityActions 
-                    actions={rowActions}
-                    entity={entity}
-                    context={actionContext}
-                    mode={actions?.mode || 'dropdown'}
-                    position={'row'}
-                    className={actions?.className || ''}
-                    onActionStart={actions?.onActionStart}
-                    onActionComplete={actions?.onActionComplete}
-                    onActionError={actions?.onActionError}
-                  />
+                      actions={rowActions}
+                      entity={entity}
+                      context={actionContext}
+                      mode={actions?.mode || 'buttons'}
+                      position={'row'}
+                      className={actions?.className || ''}
+                      onActionStart={actions?.onActionStart}
+                      onActionComplete={actions?.onActionComplete}
+                      onActionError={actions?.onActionError}
+                    />
                   </div>
                 </div>
               )}
@@ -1075,12 +1233,12 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
               </div>
               
               {rowActions.length > 0 && (
-                <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-1 flex-shrink-0 ml-2 pl-2 border-l border-gray-200" onClick={(e) => e.stopPropagation()}>
                   <EntityActions 
                     actions={rowActions}
                     entity={entity}
                     context={actionContext}
-                    mode={actions?.mode || 'dropdown'}
+                    mode={actions?.mode || 'buttons'}
                     position={'row'}
                     className={actions?.className || ''}
                     onActionStart={actions?.onActionStart}
@@ -1114,7 +1272,7 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
                    onDoubleClick={() => handleRowClick(entity, index)}>
                 {date && (
                   <div className="text-xs font-medium text-primary mb-1.5 sm:mb-2">
-                    {date.toLocaleDateString()}
+                    {dfFormat(date, 'P')}
                   </div>
                 )}
                 <div className="text-sm font-semibold text-foreground">{title}</div>
@@ -1295,14 +1453,19 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
     const hasSearch = state.search && state.search.length > 0;
     const hasFilters = state.filters && state.filters.length > 0;
     
-    // Simple placeholder for create action - in real usage, pass proper handler
+    // If parent provided an onCreate handler, use it for empty state CTAs.
     const createAction = () => {
-      // Placeholder - implement actual create handler
+      const propsWithCreate = props as unknown as { onCreate?: () => void };
+      if (typeof propsWithCreate.onCreate === 'function') {
+        try { propsWithCreate.onCreate(); } catch { /* swallow */ }
+        return;
+      }
+      // No-op when not provided
     };
     
     if (hasSearch) {
       return (
-        <div className={`bg-card rounded-lg border shadow-sm overflow-hidden ${className}`}>
+        <div className={`bg-card rounded-lg border shadow-sm overflow-visible ${className}`}>
           {renderToolbar()}
           <SearchEmptyState
             searchQuery={state.search}
@@ -1315,7 +1478,7 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
     
     if (hasFilters) {
       return (
-        <div className={`bg-card rounded-lg border shadow-sm overflow-hidden ${className}`}>
+        <div className={`bg-card rounded-lg border shadow-sm overflow-visible ${className}`}>
           {renderToolbar()}
           <FilterEmptyState
             onClear={() => {
@@ -1328,8 +1491,18 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
       );
     }
     
+    // If caller provided an explicit emptyMessage, show a tailored EmptyState
+    if (emptyMessage) {
+      return (
+        <div className={`bg-card rounded-lg border shadow-sm overflow-visible ${className}`}>
+          {renderToolbar()}
+          <EmptyState title={emptyMessage} action={{ label: 'Create item', onClick: createAction, icon: Plus }} />
+        </div>
+      );
+    }
+
     return (
-      <div className={`bg-card rounded-lg border shadow-sm overflow-hidden ${className}`}>
+      <div className={`bg-card rounded-lg border shadow-sm overflow-visible ${className}`}>
         {renderToolbar()}
         <CreateEmptyState
           entityName="item"
@@ -1347,7 +1520,7 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
                      errorMessage.toLowerCase().includes('server') ? 'server' : 'unknown';
     
     return (
-      <div className={`bg-card rounded-lg border shadow-sm overflow-hidden ${className}`}>
+      <div className={`bg-card rounded-lg border shadow-sm overflow-visible ${className}`}>
         {renderToolbar()}
         <ErrorState
           type={errorType}
@@ -1364,11 +1537,12 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
   }
 
   return (
-    <div className={`bg-card rounded-lg border shadow-sm overflow-hidden ${className}`}>
+    <div className={`bg-card rounded-lg border shadow-sm overflow-visible ${className}`}>
       {renderToolbar()}
       
       {loading ? (
         <div className="p-4">
+          <div className="mb-3 text-sm text-muted-foreground">Loading data...</div>
           <ListSkeleton
             count={state.pageSize}
             view={state.view}
@@ -1378,12 +1552,14 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
           />
         </div>
       ) : (
-        <div>
+        <div className="relative z-10">
           {renderView()}
         </div>
       )}
       
-      {renderPagination()}
+      <div>
+        {renderPagination()}
+      </div>
 
       {/* Filter Configuration Dialog */}
       <Dialog open={filterDialogOpen} onOpenChange={setFilterDialogOpen}>
@@ -1395,6 +1571,7 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            {/* Operator selector - show different options based on field type */}
             <div className="grid gap-2">
               <Label htmlFor="filter-operator">How to filter</Label>
               <Select value={filterOperator} onValueChange={(value) => setFilterOperator(value as FilterOperator)}>
@@ -1402,29 +1579,128 @@ export function EntityList<T extends BaseEntity = BaseEntity>(
                   <SelectValue placeholder="Choose how to filter" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="contains">Contains text</SelectItem>
-                  <SelectItem value="equals">Exactly matches</SelectItem>
-                  <SelectItem value="startsWith">Starts with</SelectItem>
-                  <SelectItem value="endsWith">Ends with</SelectItem>
-                  <SelectItem value="greaterThan">Greater than</SelectItem>
-                  <SelectItem value="lessThan">Less than</SelectItem>
-                  <SelectItem value="isNull">Is empty</SelectItem>
-                  <SelectItem value="isNotNull">Is not empty</SelectItem>
+                  {(() => {
+                    const selectedColumn = selectedFilterField ? columns.find(c => String(c.key) === selectedFilterField) : undefined;
+                    const fieldType = selectedColumn?.type || 'text';
+                    
+                    // Boolean fields only support equals/notEquals
+                    if (fieldType === 'boolean') {
+                      return (
+                        <>
+                          <SelectItem value="equals">Is</SelectItem>
+                          <SelectItem value="notEquals">Is not</SelectItem>
+                          <SelectItem value="isNull">Is empty</SelectItem>
+                          <SelectItem value="isNotNull">Is not empty</SelectItem>
+                        </>
+                      );
+                    }
+                    
+                    // Text fields support full set of operators
+                    return (
+                      <>
+                        <SelectItem value="contains">Contains text</SelectItem>
+                        <SelectItem value="equals">Exactly matches</SelectItem>
+                        <SelectItem value="startsWith">Starts with</SelectItem>
+                        <SelectItem value="endsWith">Ends with</SelectItem>
+                        <SelectItem value="greaterThan">Greater than</SelectItem>
+                        <SelectItem value="lessThan">Less than</SelectItem>
+                        <SelectItem value="isNull">Is empty</SelectItem>
+                        <SelectItem value="isNotNull">Is not empty</SelectItem>
+                      </>
+                    );
+                  })()}
                 </SelectContent>
               </Select>
             </div>
             
             {filterOperator !== 'isNull' && filterOperator !== 'isNotNull' && (
-              <div className="grid gap-2">
-                <Label htmlFor="filter-value">Search for</Label>
-                <Input
-                  id="filter-value"
-                  value={filterValue}
-                  onChange={(e) => setFilterValue(e.target.value)}
-                  placeholder="Type what you're looking for..."
-                  autoFocus
-                />
-              </div>
+              (() => {
+                const selectedColumn = selectedFilterField ? columns.find(c => String(c.key) === selectedFilterField) : undefined;
+                const fieldType = selectedColumn?.type || 'text';
+                const columnWithOptions = selectedColumn as unknown as { filterOptions?: Array<{ label: string; value: unknown }> } | undefined;
+                const options = columnWithOptions?.filterOptions;
+
+                // Boolean field - show simple true/false select
+                if (fieldType === 'boolean') {
+                  const booleanOptions = options || [
+                    { label: 'True', value: 'true' },
+                    { label: 'False', value: 'false' },
+                  ];
+                  
+                  return (
+                    <div className="grid gap-2">
+                      <Label htmlFor="filter-value">Choose value</Label>
+                      <Select value={String(filterValue)} onValueChange={(v) => setFilterValue(v)}>
+                        <SelectTrigger id="filter-value">
+                          <SelectValue placeholder="Select true or false" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {booleanOptions.map(opt => (
+                            <SelectItem key={String(opt.value)} value={String(opt.value)}>{opt.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  );
+                }
+
+                // If the column provides filterOptions (for select/relation fields), render a select UI
+                if (options && options.length > 0) {
+                  if (filterOperator === 'in' || filterOperator === 'notIn') {
+                    return (
+                      <div className="grid gap-2">
+                        <Label htmlFor="filter-value">Choose values</Label>
+                        <select
+                          id="filter-value"
+                          title='filter'
+                          multiple
+                          value={Array.isArray(filterValue) ? (filterValue as string[]) : (filterValue ? String(filterValue).split(',') : [])}
+                          onChange={(e) => {
+                            const selected = Array.from(e.target.selectedOptions).map(o => o.value);
+                            setFilterValue(selected);
+                          }}
+                          className="w-full px-2 py-2 border border-input rounded-md bg-background text-sm"
+                        >
+                          {options.map(opt => (
+                            <option key={String(opt.value)} value={String(opt.value)}>{opt.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  }
+
+                  // Single-select for filterOptions
+                  return (
+                    <div className="grid gap-2">
+                      <Label htmlFor="filter-value">Choose value</Label>
+                      <Select value={String(filterValue)} onValueChange={(v) => setFilterValue(v)}>
+                        <SelectTrigger id="filter-value">
+                          <SelectValue placeholder="Select a value" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {options.map(opt => (
+                            <SelectItem key={String(opt.value)} value={String(opt.value)}>{opt.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  );
+                }
+
+                // Fallback to text input for generic text fields
+                return (
+                  <div className="grid gap-2">
+                    <Label htmlFor="filter-value">Search for</Label>
+                    <Input
+                      id="filter-value"
+                      value={Array.isArray(filterValue) ? (filterValue as string[]).join(',') : String(filterValue)}
+                      onChange={(e) => setFilterValue(e.target.value)}
+                      placeholder="Type what you're looking for..."
+                      autoFocus
+                    />
+                  </div>
+                );
+              })()
             )}
 
             {filterOperator === 'between' && (

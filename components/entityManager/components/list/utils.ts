@@ -6,6 +6,7 @@
 
 import { BaseEntity, FilterConfig, SortConfig } from '../../primitives/types';
 import { Column, ListView } from './types';
+import { format, parseISO } from 'date-fns';
 
 /**
  * Get visible columns
@@ -53,16 +54,45 @@ export function formatCellValue<T extends BaseEntity>(
   }
   
   // Type-based formatting
-    if (column.type === 'date') {
-    if ((value as any) instanceof Date) {
-      return (value as Date).toLocaleDateString();
+  if (column.type === 'datetime') {
+    // Render full date + time in a consistent format using date-fns
+    if (value instanceof Date) {
+      return format(value, 'Pp');
     }
     if (typeof value === 'string' && value) {
       try {
-        return new Date(value).toLocaleDateString();
+        const parsed = parseISO(value);
+        if (!isNaN(parsed.getTime())) return format(parsed, 'Pp');
       } catch {
-        return value;
+        // fallthrough
       }
+      const asNumber = Number(value);
+      if (!Number.isNaN(asNumber)) {
+        const parsed = new Date(asNumber);
+        if (!isNaN(parsed.getTime())) return format(parsed, 'Pp');
+      }
+      return value;
+    }
+    if (typeof value === 'number') {
+      const parsed = new Date(value);
+      if (!isNaN(parsed.getTime())) return format(parsed, 'Pp');
+      return String(value);
+    }
+    return '';
+  }
+
+  if (column.type === 'date') {
+    if (value instanceof Date) {
+      return format(value, 'P');
+    }
+    if (typeof value === 'string' && value) {
+      try {
+        const parsed = parseISO(value);
+        if (!isNaN(parsed.getTime())) return format(parsed, 'P');
+      } catch {
+        // fallthrough
+      }
+      return value;
     }
     return '';
   }
@@ -216,6 +246,10 @@ export function paginateEntities<T extends BaseEntity>(
   page: number,
   pageSize: number
 ): T[] {
+  // Protect against invalid inputs
+  if (pageSize <= 0 || page <= 0) {
+    return entities.slice(0, Math.max(pageSize, 1));
+  }
   const start = (page - 1) * pageSize;
   const end = start + pageSize;
   return entities.slice(start, end);
@@ -225,6 +259,10 @@ export function paginateEntities<T extends BaseEntity>(
  * Get total pages
  */
 export function getTotalPages(totalItems: number, pageSize: number): number {
+  // Protect against invalid pageSize
+  if (pageSize <= 0) {
+    return totalItems > 0 ? 1 : 0;
+  }
   return Math.ceil(totalItems / pageSize);
 }
 
